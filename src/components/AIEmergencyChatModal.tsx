@@ -22,8 +22,6 @@ import {
 import * as Speech from 'expo-speech';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
-import * as Location from 'expo-location';
-import * as FileSystem from 'expo-file-system';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Shield,
@@ -110,7 +108,10 @@ const CATEGORY_DETAILS: Record<EmergencyCategory, { label: string; unit: string;
 
 type ProtocolStep = 'audio_gravity' | 'photo_evidence' | 'location_dispatch' | 'completed';
 
-const nowTime = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const nowTime = () => {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
 let idSeq = 0;
 const uid = (): string => `id-${Date.now()}-${idSeq++}`;
 
@@ -132,7 +133,8 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
   const [incident, setIncident] = useState<IncidentReport>(() => {
     if (existingReport) return existingReport;
     const now = new Date();
-    const dateStr = now.toLocaleDateString('es-BO', { day: 'numeric', month: 'short', year: 'numeric' });
+    const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+    const dateStr = `${now.getDate()} ${monthNames[now.getMonth()]} ${now.getFullYear()}`;
     return {
       id: `#REP-${Math.floor(1000 + Math.random() * 9000)}`,
       category,
@@ -154,25 +156,42 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
     };
   });
 
-  // Obtener ubicación GPS real al crear el incidente
+  // Obtener ubicación GPS real al crear el incidente (import dinámico para
+  // no crashear el chat si expo-location falla).
   useEffect(() => {
     if (existingReport) return;
+    let cancelled = false;
     (async () => {
       try {
+        const Location = await import('expo-location');
+        if (cancelled) return;
         const { status } = await Location.requestForegroundPermissionsAsync();
+        if (cancelled) return;
         if (status !== 'granted') {
-          setIncident(prev => ({ ...prev, location: 'Permiso de ubicación denegado' }));
+          setIncident(prev => (cancelled ? prev : { ...prev, location: 'Permiso de ubicación denegado' }));
           return;
         }
         const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        if (cancelled) return;
         const { latitude, longitude } = pos.coords;
-        const [place] = await Location.reverseGeocodeAsync({ latitude, longitude });
-        const addr = place ? `${place.street || ''} ${place.name || ''}, ${place.city || ''}`.trim() : `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+        let addr = '';
+        try {
+          const [place] = await Location.reverseGeocodeAsync({ latitude, longitude });
+          if (place) addr = `${place.street || ''} ${place.name || ''}, ${place.city || ''}`.trim();
+        } catch {
+          // reverse geocoding puede fallar; usamos coordenadas numéricas
+        }
+        if (cancelled) return;
         setIncident(prev => ({ ...prev, location: addr || `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`, coordinates: { lat: latitude, lng: longitude } }));
       } catch {
-        setIncident(prev => ({ ...prev, location: 'No se pudo obtener ubicación' }));
+        if (!cancelled) {
+          setIncident(prev => ({ ...prev, location: 'No se pudo obtener ubicación' }));
+        }
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const [protocolStep, setProtocolStep] = useState<ProtocolStep>(() =>
@@ -370,6 +389,7 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
     // Leer foto como base64 para enviar a Gemini
     let fotoBase64: string | undefined;
     try {
+      const FileSystem = await import('expo-file-system');
       const fileInfo = await FileSystem.getInfoAsync(photoUrl);
       if (fileInfo.exists) {
         fotoBase64 = await FileSystem.readAsStringAsync(photoUrl, { encoding: FileSystem.EncodingType.Base64 });
@@ -403,6 +423,7 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
     // Leer video como base64 para enviar a Gemini
     let videoBase64: string | undefined;
     try {
+      const FileSystem = await import('expo-file-system');
       const fileInfo = await FileSystem.getInfoAsync(videoUrl);
       if (fileInfo.exists) {
         videoBase64 = await FileSystem.readAsStringAsync(videoUrl, { encoding: FileSystem.EncodingType.Base64 });
@@ -459,6 +480,7 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
       // Leer audio como base64 para enviar a Gemini
       let audioBase64: string | undefined;
       try {
+        const FileSystem = await import('expo-file-system');
         const fileInfo = await FileSystem.getInfoAsync(uri);
         if (fileInfo.exists) {
           audioBase64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
