@@ -26,7 +26,10 @@ export interface AnalyzeIncidentParams {
   texto?: string;
   descripcion?: string;
   audioTranscript?: string;
+  audioBase64?: string;
+  audioMimeType?: string;
   fotoUrl?: string;
+  fotoBase64?: string;
   mediaMimeType?: string;
 }
 
@@ -91,7 +94,10 @@ export async function analyzeIncidentWithAI(
         texto: params.texto,
         descripcion: params.descripcion,
         audioTranscript: params.audioTranscript,
+        audioBase64: params.audioBase64,
+        audioMimeType: params.audioMimeType,
         fotoUrl: params.fotoUrl,
+        fotoBase64: params.fotoBase64,
         mediaMimeType: params.mediaMimeType,
       },
     });

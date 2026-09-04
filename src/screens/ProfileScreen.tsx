@@ -287,18 +287,18 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               <View style={[styles.onlineDot, { borderColor: isLight ? '#fff' : '#131313' }]} />
             </View>
 
-            <Text style={[styles.profileName, { color: fg }]}>{userProfile.name}</Text>
-            <Text style={styles.profilePhone}>{userProfile.phone}</Text>
+            <Text style={[styles.profileName, { color: fg }]}>{userProfile.name || 'Registrar nombre'}</Text>
+            <Text style={[styles.profilePhone, !userProfile.phone && { opacity: 0.4 }]}>{userProfile.phone || 'Registrar teléfono'}</Text>
 
             <View style={styles.pillsRow}>
               <View style={[styles.pill, { borderColor: cardBorder, backgroundColor: isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.05)' }]}>
                 <Text style={{ color: fg, fontSize: 11 }}>
-                  Sangre: <Text style={{ fontWeight: '800' }}>{userProfile.bloodType}</Text>
+                  Sangre: <Text style={{ fontWeight: '800' }}>{userProfile.bloodType || 'No especificado'}</Text>
                 </Text>
               </View>
               <View style={[styles.pill, { borderColor: cardBorder, backgroundColor: isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.05)' }]}>
                 <Text style={{ color: fg, fontSize: 11 }}>
-                  Alergias: <Text style={{ fontWeight: '800' }}>{userProfile.allergies}</Text>
+                  Alergias: <Text style={{ fontWeight: '800' }}>{userProfile.allergies || 'No especificado'}</Text>
                 </Text>
               </View>
             </View>
@@ -336,7 +336,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         </View>
 
         <View style={{ gap: 10 }}>
-          {userProfile.emergencyContacts.map((contact, i) => (
+          {userProfile.emergencyContacts.length === 0 ? (
+            <View style={[styles.contactCard, { backgroundColor: cardBg, borderColor: cardBorder, paddingVertical: 20, alignItems: 'center' }]}>
+              <Text style={{ color: '#8e9192', fontSize: 13 }}>No hay contactos de emergencia registrados</Text>
+              <Text style={{ color: '#8e9192', fontSize: 11, marginTop: 4 }}>Presiona + para agregar uno</Text>
+            </View>
+          ) : userProfile.emergencyContacts.map((contact, i) => (
             <Animated.View
               key={contact.id}
               entering={FadeInUp.delay(i * 40).duration(250)}

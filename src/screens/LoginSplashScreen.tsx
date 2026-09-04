@@ -376,7 +376,7 @@ export const LoginSplashScreen: React.FC<LoginSplashScreenProps> = ({
     }
   };
 
-  const handleRegisterStep1Next = () => {
+  const handleRegisterStep1Next = async () => {
     setErrorMessage(null);
 
     const emailTrimmed = regEmail.trim().toLowerCase();
@@ -419,6 +419,34 @@ export const LoginSplashScreen: React.FC<LoginSplashScreenProps> = ({
       return;
     }
     setRegPhone(`+591 ${normalizedDigits}`);
+
+    // Verificar si el email ya está registrado en Supabase
+    try {
+      const probePassword = '__probe_check__';
+      const { error } = await supabase.auth.signInWithPassword({ email: emailTrimmed, password: probePassword });
+      if (error) {
+        const msg = error.message.toLowerCase();
+        if (msg.includes('invalid login') || msg.includes('invalid credentials')) {
+          // Email no existe → permitir avanzar
+        } else if (msg.includes('email not confirmed') || msg.includes('not confirmed')) {
+          setErrorMessage('Este correo ya está registrado pero no ha sido confirmado. Revisa tu bandeja de entrada para confirmarlo.');
+          return;
+        } else if (msg.includes('too many') || msg.includes('rate limit')) {
+          setErrorMessage('Demasiados intentos. Espera un momento e intenta de nuevo.');
+          return;
+        } else {
+          // Otro error → permitir avanzar (el error real saldrá en signUp)
+        }
+      } else {
+        // Login exitoso = email ya registrado y confirmado
+        // Cerrar la sesión del probe
+        await supabase.auth.signOut();
+        setErrorMessage('Este correo ya está registrado. Inicia sesión con tu contraseña.');
+        return;
+      }
+    } catch {
+      // Si falla la verificación, permitir avanzar (el error real saldrá en signUp)
+    }
 
     setRegisterSubStep(2);
   };

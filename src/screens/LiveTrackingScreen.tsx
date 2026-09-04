@@ -54,7 +54,7 @@ export const LiveTrackingScreen: React.FC<LiveTrackingScreenProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const [secondsRemaining, setSecondsRemaining] = useState(
-    incident.status === 'resolved' ? 0 : incident.etaMinutes * 60 + incident.etaSeconds || 225
+    incident.status === 'resolved' ? 0 : (incident.etaMinutes || 0) * 60 + (incident.etaSeconds || 0)
   );
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [currentStage, setCurrentStage] = useState<'despachada' | 'en_ruta' | 'en_sitio'>(
@@ -88,7 +88,7 @@ export const LiveTrackingScreen: React.FC<LiveTrackingScreenProps> = ({
 
     const messageText =
       incident.aiVoiceMessage ||
-      'Unidad de respuesta de emergencia en camino hacia su ubicación. Mantenga la calma y permanezca en un lugar seguro.';
+      'Unidad de emergencia en camino. Mantenga la calma.';
 
     setIsPlayingAudio(true);
     Speech.speak(messageText, {
@@ -183,14 +183,14 @@ export const LiveTrackingScreen: React.FC<LiveTrackingScreenProps> = ({
               <View style={styles.unitTextBox}>
                 <View style={styles.unitNameRow}>
                   <Text style={styles.unitName} numberOfLines={1}>
-                    {incident.unitAssigned || 'AMBULANCIA_T4'}
+                    {incident.unitAssigned || 'Sin asignar'}
                   </Text>
                   <View style={styles.statusPill}>
                     <Text style={styles.statusPillText}>EN RUTA</Text>
                   </View>
                 </View>
                 <Text style={styles.unitOrigin} numberOfLines={1}>
-                  Desde: {incident.originDepot || 'Estación Central'}
+                  Desde: {incident.originDepot || 'Sin estación'}
                 </Text>
               </View>
             </View>

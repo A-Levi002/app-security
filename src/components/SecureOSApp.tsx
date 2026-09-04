@@ -113,13 +113,13 @@ export const SecureOSApp: React.FC = () => {
           ]);
           if (active) {
             setUserProfile({
-              name: dbProfile?.name || userProfile.name || 'Ciudadano SecureOS',
-              email: data.session?.user?.email || userProfile.email,
-              phone: dbProfile?.phone || userProfile.phone,
-              bloodType: dbProfile?.bloodType || userProfile.bloodType,
-              allergies: dbProfile?.allergies || userProfile.allergies,
+              name: dbProfile?.name || userProfile.name || '',
+              email: data.session?.user?.email || userProfile.email || '',
+              phone: dbProfile?.phone || userProfile.phone || '',
+              bloodType: dbProfile?.bloodType || userProfile.bloodType || '',
+              allergies: dbProfile?.allergies || userProfile.allergies || '',
               avatarUrl: dbProfile?.avatarUrl || userProfile.avatarUrl,
-              bannerUrl: dbProfile?.bannerUrl || userProfile.bannerUrl,
+              bannerUrl: dbProfile?.bannerUrl || userProfile.bannerUrl || '',
               emergencyContacts: dbContacts.length ? dbContacts : userProfile.emergencyContacts,
             });
             setAuthUserId(uid);
@@ -162,7 +162,7 @@ export const SecureOSApp: React.FC = () => {
       setAuthUserId(uid);
       loadUserDataFromServer(uid);
     }
-    showToast(`SESIÓN INICIADA: ${newProfile.name.toUpperCase()}`);
+    showToast(`SESIÓN INICIADA: ${newProfile.name ? newProfile.name.toUpperCase() : 'SECURE_OS'}`);
   }, [loadUserDataFromServer, setUserProfile, showToast]);
 
   const handleOpenEmergencySelection = useCallback(() => setShowCategorySelect(true), []);

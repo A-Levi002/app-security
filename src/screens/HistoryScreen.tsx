@@ -566,10 +566,10 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
                   {/* Grid de metadatos */}
                   <View style={[styles.metaGrid, { borderTopColor: cardBorder }]}>
                     {[
-                      ['Unidad Asignada', selectedDetailReport.unitAssigned || 'AMBULANCIA_T4'],
-                      ['Base de Origen', selectedDetailReport.originDepot || 'Estación Central'],
+                      ['Unidad Asignada', selectedDetailReport.unitAssigned || 'Sin asignar'],
+                      ['Base de Origen', selectedDetailReport.originDepot || 'Sin estación'],
                       ['Fecha y Hora', `${selectedDetailReport.date} - ${selectedDetailReport.time}`],
-                      ['Nivel de Gravedad', (selectedDetailReport.severity || 'ALTA').toUpperCase()],
+                      ['Nivel de Gravedad', (selectedDetailReport.severity || 'No definida').toUpperCase()],
                     ].map(([label, value]) => (
                       <View
                         key={label}

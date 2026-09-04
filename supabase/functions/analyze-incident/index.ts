@@ -130,7 +130,10 @@ Deno.serve(async (req: Request) => {
     texto?: string;
     descripcion?: string;
     audioTranscript?: string;
+    audioBase64?: string;
+    audioMimeType?: string;
     fotoUrl?: string;
+    fotoBase64?: string;
     mediaMimeType?: string;
   };
   try {
@@ -155,13 +158,21 @@ Deno.serve(async (req: Request) => {
     .filter(Boolean)
     .join("\n");
 
-  // Payload del prompt a Gemini. Si hay foto, la incluimos como inline_data
-  // (dato base64 de la media). Para audio/video se podría usar file API de Gemini,
-  // pero aquí usamos texto + foto inline para mantener el despliegue simple.
+  // Payload del prompt a Gemini. Si hay foto/audio en base64, la incluimos como inline_data.
   const parts: any[] = [
     { text: `${SYSTEM_PROMPT}\n\nContexto del incidente:\n${contexto}` },
   ];
-  if (body.fotoUrl && /^https?:\/\//.test(body.fotoUrl)) {
+
+  // Soporte para foto en base64 (enviada desde el cliente)
+  if (body.fotoBase64) {
+    parts.push({
+      inline_data: {
+        mime_type: body.mediaMimeType || "image/jpeg",
+        data: body.fotoBase64,
+      },
+    });
+  } else if (body.fotoUrl && /^https?:\/\//.test(body.fotoUrl)) {
+    // Fallback: si viene una URL HTTP, la fetchamos
     try {
       const mediaRes = await fetch(body.fotoUrl);
       if (mediaRes.ok) {
@@ -182,6 +193,16 @@ Deno.serve(async (req: Request) => {
     } catch {
       // si la media no se puede leer, seguimos solo con texto
     }
+  }
+
+  // Soporte para audio en base64 (enviado desde el cliente)
+  if (body.audioBase64) {
+    parts.push({
+      inline_data: {
+        mime_type: body.audioMimeType || "audio/mp4",
+        data: body.audioBase64,
+      },
+    });
   }
 
   const geminiRes = await fetch(`${GEMINI_URL}?key=${encodeURIComponent(GEMINI_API_KEY)}`, {

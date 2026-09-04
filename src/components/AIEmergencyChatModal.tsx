@@ -22,6 +22,8 @@ import {
 import * as Speech from 'expo-speech';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
+import * as Location from 'expo-location';
+import * as FileSystem from 'expo-file-system';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Shield,
@@ -130,6 +132,7 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
   const [incident, setIncident] = useState<IncidentReport>(() => {
     if (existingReport) return existingReport;
     const now = new Date();
+    const dateStr = now.toLocaleDateString('es-BO', { day: 'numeric', month: 'short', year: 'numeric' });
     return {
       id: `#REP-${Math.floor(1000 + Math.random() * 9000)}`,
       category,
@@ -139,17 +142,38 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
       severity: 'high' as IncidentSeverity,
       status: 'in_progress',
       dispatchStep: 'classified',
-      date: '20 Ago 2026',
+      date: dateStr,
       time: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
       unitAssigned: categoryInfo.unit,
       originDepot: categoryInfo.depot,
-      etaMinutes: 3,
-      etaSeconds: 45,
-      location: 'Av. Insurgentes Sur #450, Sector 4, CDMX',
-      coordinates: { lat: 19.4326, lng: -99.1332 },
-      aiVoiceMessage: 'Unidad de respuesta táctica en camino. Mantenga la calma y permanezca a resguardo.',
+      etaMinutes: 0,
+      etaSeconds: 0,
+      location: 'Obteniendo ubicación...',
+      coordinates: { lat: 0, lng: 0 },
+      aiVoiceMessage: '',
     };
   });
+
+  // Obtener ubicación GPS real al crear el incidente
+  useEffect(() => {
+    if (existingReport) return;
+    (async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          setIncident(prev => ({ ...prev, location: 'Permiso de ubicación denegado' }));
+          return;
+        }
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        const { latitude, longitude } = pos.coords;
+        const [place] = await Location.reverseGeocodeAsync({ latitude, longitude });
+        const addr = place ? `${place.street || ''} ${place.name || ''}, ${place.city || ''}`.trim() : `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+        setIncident(prev => ({ ...prev, location: addr || `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`, coordinates: { lat: latitude, lng: longitude } }));
+      } catch {
+        setIncident(prev => ({ ...prev, location: 'No se pudo obtener ubicación' }));
+      }
+    })();
+  }, []);
 
   const [protocolStep, setProtocolStep] = useState<ProtocolStep>(() =>
     existingReport ? 'completed' : 'audio_gravity'
@@ -343,11 +367,22 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
     appendAndSave(withPhoto, { imageUrl: photoUrl, dispatchStep: 'en_route' });
     setProtocolStep('completed');
 
+    // Leer foto como base64 para enviar a Gemini
+    let fotoBase64: string | undefined;
+    try {
+      const fileInfo = await FileSystem.getInfoAsync(photoUrl);
+      if (fileInfo.exists) {
+        fotoBase64 = await FileSystem.readAsStringAsync(photoUrl, { encoding: FileSystem.EncodingType.Base64 });
+      }
+    } catch {
+      // Si falla la lectura, enviamos sin foto
+    }
+
     setIsAnalyzing(true);
     const analysis = await analyzeIncidentWithAI({
       categoria: category,
       descripcion: 'Evidencia fotográfica capturada en la escena.',
-      fotoUrl: photoUrl,
+      fotoBase64,
       mediaMimeType: 'image/jpeg',
     });
     setIsAnalyzing(false);
@@ -365,11 +400,22 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
     appendAndSave(withVideo, { dispatchStep: 'en_route' });
     setProtocolStep('completed');
 
+    // Leer video como base64 para enviar a Gemini
+    let videoBase64: string | undefined;
+    try {
+      const fileInfo = await FileSystem.getInfoAsync(videoUrl);
+      if (fileInfo.exists) {
+        videoBase64 = await FileSystem.readAsStringAsync(videoUrl, { encoding: FileSystem.EncodingType.Base64 });
+      }
+    } catch {
+      // Si falla la lectura, enviamos sin video
+    }
+
     setIsAnalyzing(true);
     const analysis = await analyzeIncidentWithAI({
       categoria: category,
       descripcion: 'Evidencia de video grabada en la escena.',
-      fotoUrl: videoUrl,
+      fotoBase64: videoBase64,
       mediaMimeType: 'video/mp4',
     });
     setIsAnalyzing(false);
@@ -410,10 +456,23 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
       appendAndSave([...messages, userAudioMsg], { audioNote: uri });
       setProtocolStep('photo_evidence');
 
+      // Leer audio como base64 para enviar a Gemini
+      let audioBase64: string | undefined;
+      try {
+        const fileInfo = await FileSystem.getInfoAsync(uri);
+        if (fileInfo.exists) {
+          audioBase64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+        }
+      } catch {
+        // Si falla la lectura, enviamos sin audio
+      }
+
       setIsAnalyzing(true);
       const analysis = await analyzeIncidentWithAI({
         categoria: category,
         descripcion: 'Nota de voz grabada por el ciudadano indicando la gravedad del incidente.',
+        audioBase64,
+        audioMimeType: 'audio/mp4',
       });
       setIsAnalyzing(false);
 
