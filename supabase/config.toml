@@ -1,0 +1,15 @@
+# Configuración de Supabase local / Edge Functions.
+# Referencia: https://supabase.com/docs/guides/functions/config
+
+project_id = "app-security"
+
+[functions.analyze-incident]
+verify_jwt = true
+import_map = "./functions/analyze-incident/deno.json"
+
+# Plantilla personalizada del correo de confirmación de cuenta (confirm signup).
+# Despliegue: npx supabase link --project-ref lbofnnfihrdubcqdplcm
+#             npx supabase config push
+[auth.email.template.confirmation]
+subject = "SECURE_OS · Confirma tu cuenta"
+content_path = "./database/supabase_email_confirmacion.html"

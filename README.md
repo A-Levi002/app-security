@@ -1,56 +1,61 @@
-# Welcome to your Expo app 👋
+# SECURE_OS / Alert.IA
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Sistema de alerta y respuesta táctica: **botón SOS**, análisis de incidentes con
+IA, despacho de unidades, registro y seguimiento de emergencias. Aplicación
+móvil **Expo / React Native** (SDK 57), backend en **Supabase**.
 
-## Get started
+## Estructura del proyecto
 
-1. Install dependencies
-
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+```
+├── src/                     # FRONTEND — app móvil (Expo Router)
+│   ├── app/                 # entradas de expo-router (index, _layout)
+│   ├── screens/             # pantallas (Home, History, Profile, Settings, Login…)
+│   ├── components/          # componentes y modales reutilizables
+│   ├── lib/                 # supabase.ts (cliente), db.ts (capa de datos) y ai.ts
+│   ├── data/                # datos semilla y avatares
+│   ├── hooks/               # persistencia local (AsyncStorage)
+│   └── types.ts             # modelo de dominio compartido
+├── database/                # BD — esquema Supabase + migración (ver README)
+├── supabase/functions/      # EDGE FUNCTIONS — implementadas (analyze-incident)
+├── backend/                 # BACKEND — guía + contratos de funciones pendientes
+└── secure_os/               # prototipo web de referencia (Vite, fuera del build)
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+| Capa | Ubicación | Estado |
+| --- | --- | --- |
+| Frontend | `src/` | Implementado (flujo completo: boot → setup → login → permisos → home) |
+| Base de datos | `database/` | Esquema + migración listos (RLS, triggers, vistas, auditoría) |
+| Backend (IA chat) | `supabase/functions/analyze-incident/` | **Implementada** (Gemini) |
+| Backend (resto) | `backend/` | Guía/contratos — dispatch, sos, notify, iot-ingest pendientes |
 
-### Other setup steps
+## Cómo correr el frontend
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+```bash
+npm install
+cp .env.example .env   # pega EXPO_PUBLIC_SUPABASE_URL y ..._ANON_KEY
+npx expo start
+```
 
-## Learn more
+También: `npm run android` (build nativo, necesario para expo-audio),
+`npm run lint` y `npx tsc --noEmit`.
 
-To learn more about developing your project with Expo, look at the following resources:
+## Base de datos
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Aplica el esquema y la migración en el SQL Editor de Supabase, en ese orden.
+Ver `database/README.md` para detalles.
 
-## Join the community
+## Backend
 
-Join our community of developers creating universal apps.
+- La **IA del chat** está implementada: `supabase/functions/analyze-incident/`
+  (Edge Function que clasifica el incidente con Gemini y escribe en
+  `analisis_ia` / `reportes_emergencia`). La clave de Gemini va en **Secrets**
+  de Supabase (nunca en el cliente). Ver su `README.md`.
+- Los demás flujos (despacho, push, SOS, IoT) siguen **simulados en el
+  frontend** para la demo. El equipo de backend los implementa según los
+  contratos en `backend/functions/*/README.md` y el mapa de responsabilidades
+  en `backend/README.md`.
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## Documentación aplicable
+
+- Supabase: https://supabase.com/docs
+- Expo SDK 57: https://docs.expo.dev/versions/v57.0.0/

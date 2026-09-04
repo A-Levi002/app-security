@@ -16,5 +16,15 @@
     "**/*.tsx",
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "secure_os",
+    "supabase",
+    "SecureOSNative",
+    "SecureOSNative (1)",
+    "SecureOSNative (2)",
+    "SecureOSNative (3)",
+    "SecureOSNative (4)"
   ]
 }
