@@ -241,9 +241,11 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
     chatBottomRef.current?.scrollToEnd({ animated: true });
   }, [messages, isRecording, protocolStep]);
 
-  // ETA countdown timer
+  // ETA countdown timer: solo cuenta si hay un ETA real asignado por el backend.
+  // Si el ETA es 0 (emergencia aún sin despacho), NO se debe auto-resolver el incidente.
   useEffect(() => {
     if (incident.status !== 'in_progress') return;
+    if (incident.etaMinutes === 0 && incident.etaSeconds === 0) return;
     const timer = setInterval(() => {
       setIncident((prev: IncidentReport) => {
         if (prev.status === 'resolved') {
@@ -267,7 +269,7 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [incident.status]);
+  }, [incident.status, incident.etaMinutes, incident.etaSeconds]);
 
   // Guarda el hilo completo en el expediente del incidente (para el historial)
   const appendAndSave = (nextMessages: ChatMessage[], extraPatch?: Partial<IncidentReport>) => {
