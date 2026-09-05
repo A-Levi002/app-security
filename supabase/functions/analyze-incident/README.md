@@ -75,7 +75,7 @@ Este es el archivo que se despliega, no un esqueleto.
 2. **Configura el secreto `GEMINI_API_KEY`**:
    Dashboard → **Project Settings → Edge Functions → Secrets** → añadir
    `GEMINI_API_KEY = <tu clave de Google AI Studio>`
-   (opcional) `GEMINI_MODEL = gemini-2.5-flash`
+   (opcional) `GEMINI_MODEL = gemini-3.6-flash`
 
    > La clave de Gemini vive ÚNICAMENTE en Secrets de Supabase. **Nunca** debe ir
    > en el cliente/APK (`.env`/`.env.example`).
