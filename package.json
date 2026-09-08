@@ -59,7 +59,8 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "deploy:ia": "npx supabase --workdir backend functions deploy analyze-incident --project-ref lbofnnfihrdubcqdplcm"
   },
   "private": true
 }

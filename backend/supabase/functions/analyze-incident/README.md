@@ -5,7 +5,7 @@ inline) y escribe el resultado en la BD.
 
 ## Código de la función
 
-El código real está en `supabase/functions/analyze-incident/index.ts` (Deno/TS).
+El código real está en `backend/supabase/functions/analyze-incident/index.ts` (Deno/TS).
 Este es el archivo que se despliega, no un esqueleto.
 
 - **Ruta nativa de Gemini**: `generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key=...`
@@ -64,10 +64,12 @@ Este es el archivo que se despliega, no un esqueleto.
 
 ## Despliegue
 
-1. **Sube el código de la función** (`supabase/functions/analyze-incident/index.ts`).
-   Con CLI:
+1. **Sube el código de la función** (`backend/supabase/functions/analyze-incident/index.ts`).
+   Con CLI (desde la raíz del repo, la config vive en `backend/supabase/`):
    ```bash
-   supabase functions deploy analyze-incident --project-ref lbofnnfihrdubcqdplcm
+   npm run deploy:ia
+   # equivalente a:
+   # npx supabase --workdir backend functions deploy analyze-incident --project-ref lbofnnfihrdubcqdplcm
    ```
    o, desde el Dashboard de Supabase → **Edge Functions → Create Function** → pega
    el contenido de `index.ts`.

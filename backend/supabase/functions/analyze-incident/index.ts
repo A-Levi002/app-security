@@ -17,8 +17,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") || "";
-// Modelo por defecto (flash = rápido/barato; habilita "thinking" si usas pro).
-// gemini-2.5-flash fue retirado por Google para cuentas nuevas (404) -> 3.6-flash.
+
 const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-3.6-flash";
 const GEMINI_URL =
   Deno.env.get("GEMINI_API_URL") ||

@@ -26,7 +26,7 @@
 - **Frontend** → habla con Supabase directo vía anon key + **RLS** (nunca usa la
   service_role key). Para IA, push, despacho y flujos institucionales llama a
   Edge Functions.
-- **Backend** → Edge Functions en `supabase/functions/` (Deno/TypeScript) + RPC
+- **Backend** → Edge Functions en `backend/supabase/functions/` (Deno/TypeScript) + RPC
   de Postgres + cron. Es el único que puede usar credenciales privilegiadas.
 - **Base de datos** → `database/` (esquema + migración ya implementados).
 
@@ -50,17 +50,19 @@
 ## Estructura
 
 ```
-supabase/functions/
-├── analyze-incident/     # ✅ IMPLEMENTADA — IA: clasificar severidad/tipo (Gemini)
-├── dispatch/             # Pendiente — Asignar recursos a un reporte + push
-├── notify/               # Pendiente — Push a contactos/instituciones (FCM/Expo)
-├── sos/                  # Pendiente — Generar llamada SOS + notificar red de confianza
-└── iot-ingest/           # Pendiente — Webhook de sensores ESP32 → eventos_sensor
+backend/supabase/
+├── config.toml            # Configuración del proyecto Supabase (CLI)
+└── functions/             # EDGE FUNCTIONS (Deno/TS)
+    ├── analyze-incident/  # ✅ IMPLEMENTADA — IA: clasificar severidad/tipo (Gemini)
+    ├── dispatch/          # Pendiente — Asignar recursos a un reporte + push
+    ├── notify/            # Pendiente — Push a contactos/instituciones (FCM/Expo)
+    ├── sos/               # Pendiente — Generar llamada SOS + notificar red de confianza
+    └── iot-ingest/        # Pendiente — Webhook de sensores ESP32 → eventos_sensor
 ```
 
 - `analyze-incident/` es la única con código real (`index.ts` + `README.md`).
-- Las carpetas restantes contienen solo su `README.md` con el contrato esperado
-  (endpoint, inputs, outputs, tablas); el `index.ts` aún no está implementado a
+- Las carpetas restantes contienen **contratos** (specs `README.md`) en
+  `backend/functions/<nombre>/README.md`; el `index.ts` aún no está implementado a
   propósito — el equipo de backend los desarrolla.
 
 ## Reglas de oro
@@ -77,23 +79,25 @@ supabase/functions/
 ## Comandos útiles
 
 ```bash
-# Subir funciones de ejemplo (cuando existan)
-npx supabase functions deploy analyze-incident
+# Subir la IA del chat (implementada). La config vive en backend/supabase/
+npm run deploy:ia
+# o explícitamente:
+npx supabase --workdir backend functions deploy analyze-incident --project-ref lbofnnfihrdubcqdplcm
 
 # Vincular el proyecto (una vez)
 npx supabase login
-npx supabase link --project-ref <ref>
+npx supabase --workdir backend link --project-ref lbofnnfihrdubcqdplcm
 ```
 
 ## Email de confirmación personalizado
 
 La plantilla del correo de "confirmar cuenta" (`database/supabase_email_confirmacion.html`)
-se versiona en `supabase/config.toml` bajo `[auth.email.template.confirmation]`.
+se versiona en `backend/supabase/config.toml` bajo `[auth.email.template.confirmation]`.
 Para que Supabase use ese diseño:
 
 ```bash
-npx supabase link --project-ref lbofnnfihrdubcqdplcm
-npx supabase config push
+npx supabase --workdir backend link --project-ref lbofnnfihrdubcqdplcm
+npx supabase --workdir backend config push
 ```
 
 > Nota: si `config push` reporta un problema de ruta (hay un bug conocido de la CLI

@@ -21,6 +21,7 @@
     "node_modules",
     "secure_os",
     "supabase",
+    "backend/supabase",
     "SecureOSNative",
     "SecureOSNative (1)",
     "SecureOSNative (2)",
