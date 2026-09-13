@@ -202,13 +202,13 @@ export const SecureOSApp: React.FC = () => {
     });
   }, [setSettings, authUserId]);
 
-  const handleUpdateProfile = useCallback((p: UserProfile) => {
+  const handleUpdateProfile = useCallback((p: UserProfile, feedbackMessage?: string) => {
     setUserProfile(p);
     if (authUserId) {
       saveProfile(authUserId, p).catch(() => {});
       saveContacts(authUserId, p.emergencyContacts).catch(() => {});
     }
-    showToast('PERFIL ACTUALIZADO');
+    showToast(feedbackMessage || 'PERFIL ACTUALIZADO');
   }, [setUserProfile, authUserId, showToast]);
 
   const handleDeleteReport = useCallback((id: string) => {
@@ -330,6 +330,7 @@ export const SecureOSApp: React.FC = () => {
             <View style={[styles.fill, activeTab !== 'profile' && styles.hidden]}>
               <MemoProfileScreen
                 userProfile={userProfile}
+                reports={reports}
                 onUpdateProfile={handleUpdateProfile}
                 onCallContact={handleCallContact}
                 onOpenSettings={handleOpenSettings}

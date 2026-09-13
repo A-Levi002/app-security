@@ -5,7 +5,11 @@ export type EmergencyCategory =
   | 'traffic'
   | 'fire'
   | 'medical'
-  | 'robbery';
+  | 'robbery'
+  | 'suspicious_person'
+  | 'violence'
+  | 'vandalism'
+  | 'other';
 
 export type IncidentStatus = 'in_progress' | 'resolved' | 'closed';
 
@@ -86,6 +90,7 @@ export interface EmergencyContact {
   phone: string;
   initials: string;
   avatarUrl?: string;
+  notifyOnSos?: boolean;
 }
 
 export interface UserAccount {
@@ -138,3 +143,14 @@ export interface SystemSettings {
 }
 
 export type AIChatMessage = ChatMessage;
+
+export interface AppNotification {
+  id: string;
+  title: string;
+  message: string;
+  timestamp: string;
+  read: boolean;
+  type: 'dispatch' | 'alert' | 'status_update' | 'security';
+  relatedIncidentId?: string;
+  unitAssigned?: string;
+}

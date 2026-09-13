@@ -47,6 +47,7 @@ import {
   RotateCw,
   LogOut,
   ImagePlus,
+  Menu,
 } from 'lucide-react-native';
 import {
   EmergencyCategory,
@@ -103,6 +104,26 @@ const CATEGORY_DETAILS: Record<EmergencyCategory, { label: string; unit: string;
     label: 'Robo / Intrusión',
     unit: 'PATRULLA_T8',
     depot: 'Comando de Respuesta Rápida Delta',
+  },
+  suspicious_person: {
+    label: 'Persona Sospechosa',
+    unit: 'PATRULLA_S3',
+    depot: 'Módulo de Vigilancia K9',
+  },
+  violence: {
+    label: 'Violencia / Agresión',
+    unit: 'PATRULLA_INTERVENCION_V1',
+    depot: 'Unidad de Intervención Inmediata',
+  },
+  vandalism: {
+    label: 'Vandalismo',
+    unit: 'UNIDAD_CONTROL_U6',
+    depot: 'Base de Control Urbano',
+  },
+  other: {
+    label: 'Otro Incidente',
+    unit: 'CENTRAL_DESPACHO_911',
+    depot: 'Central de Despacho 911',
   },
 };
 
@@ -222,6 +243,7 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showFullMapModal, setShowFullMapModal] = useState(false);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [showQuickRail, setShowQuickRail] = useState(false);
 
   const [showLiveCameraModal, setShowLiveCameraModal] = useState(false);
   const [cameraMode, setCameraMode] = useState<'picture' | 'video'>('picture');
@@ -952,25 +974,53 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
           </View>
         ) : (
           <View style={styles.chatControls}>
-            <View style={styles.chatControlsBtns}>
-              <TouchableOpacity style={[styles.ghostIconBtn, { borderColor: isLight ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.15)', backgroundColor: isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.1)' }]} onPress={() => openCamera('picture')}>
-                <Camera size={16} color={fg} />
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.ghostIconBtn, { borderColor: isLight ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.15)', backgroundColor: isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.1)' }]} onPress={() => openCamera('video')}>
-                <Video size={16} color="#ef4444" />
-              </TouchableOpacity>
+            {/* Barra lateral de acciones rápidas (al costado, tipo IA) */}
+            {showQuickRail && (
+              <View style={[styles.quickRail, { backgroundColor: isLight ? 'rgba(255,255,255,0.95)' : 'rgba(20,20,22,0.96)', borderColor: isLight ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.15)' }]}>
+                <TouchableOpacity style={styles.railItem} onPress={() => { setShowQuickRail(false); openCamera('picture'); }}>
+                  <Camera size={16} color={fg} />
+                  <Text style={styles.railItemLabel}>Cámara</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.railItem} onPress={() => { setShowQuickRail(false); openCamera('video'); }}>
+                  <Video size={16} color="#ef4444" />
+                  <Text style={styles.railItemLabel}>Video</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.railItem} onPress={() => { setShowQuickRail(false); if (isRecording) stopAudioRecording(); else startAudioRecording(); }}>
+                  <Mic size={16} color={isRecording ? '#ef4444' : fg} />
+                  <Text style={styles.railItemLabel}>Audio</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.railItem} onPress={() => { setShowQuickRail(false); handlePickPhoto(); }}>
+                  <ImagePlus size={16} color="#10b981" />
+                  <Text style={styles.railItemLabel}>Foto</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.railItem} onPress={() => { setShowQuickRail(false); setShowFullMapModal(true); }}>
+                  <Radio size={16} color={fg} />
+                  <Text style={styles.railItemLabel}>Mapa</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            <View style={styles.chatControlsRow}>
+              {/* Toggle de la barra lateral (costado izquierdo) */}
               <TouchableOpacity
-                style={[styles.ghostIconBtn, { borderColor: isLight ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.15)', backgroundColor: isRecording ? '#ef4444' : isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.1)' }]}
-                onPress={() => (isRecording ? stopAudioRecording() : startAudioRecording())}
+                style={[styles.railToggleBtn, { borderColor: isLight ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.15)', backgroundColor: showQuickRail ? '#10b981' : isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.1)' }]}
+                onPress={() => setShowQuickRail((v) => !v)}
               >
-                <Mic size={16} color={isRecording ? '#fff' : fg} />
+                {showQuickRail ? <X size={16} color="#fff" /> : <Menu size={16} color={fg} />}
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.ghostIconBtn, { borderColor: isLight ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.15)', backgroundColor: isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.1)' }]} onPress={handlePickPhoto}>
-                <ImagePlus size={16} color="#10b981" />
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.ghostIconBtn, { borderColor: isLight ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.15)', backgroundColor: isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.1)' }]} onPress={() => setShowFullMapModal(true)}>
-                <Radio size={16} color={isLight ? '#000' : '#fff'} />
-              </TouchableOpacity>
+
+              {/* Botón de llamada rápida (casi al centro) */}
+              <View style={styles.callCenterSlot}>
+                <TouchableOpacity
+                  style={[styles.callMainBtn, { backgroundColor: '#059669' }]}
+                  onPress={() => onCallContact && onCallContact(incident.unitAssigned, '+52 55 9110 0021')}
+                >
+                  <Phone size={18} color="#fff" />
+                  <Text style={styles.callMainBtnText}>LLAMAR</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Finalizar (compacto) */}
               <TouchableOpacity style={[styles.controlPill, { backgroundColor: '#059669' }]} onPress={handleResolveIncident}>
                 <CheckCircle2 size={14} color="#fff" />
                 <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700', textTransform: 'uppercase' }}>Finalizar</Text>
@@ -1245,10 +1295,41 @@ const styles = StyleSheet.create({
   photoActionBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12, paddingHorizontal: 6, borderRadius: 16, minHeight: 44 },
   videoActionBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12, paddingHorizontal: 6, borderRadius: 16, minHeight: 44, backgroundColor: '#dc2626' },
   ghostAction: { borderWidth: 1 },
-  chatControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8 },
+  chatControls: { position: 'relative' },
+  chatControlsRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   chatControlsBtns: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   ghostIconBtn: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
   controlPill: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 20, borderWidth: 1 },
+  railToggleBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
+  callCenterSlot: { flex: 1, alignItems: 'center' },
+  callMainBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 26,
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  callMainBtnText: { color: '#fff', fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1 },
+  quickRail: {
+    position: 'absolute',
+    left: 0,
+    bottom: 54,
+    zIndex: 30,
+    borderRadius: 20,
+    borderWidth: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    gap: 4,
+    shadowOpacity: 0.3,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  railItem: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 14 },
+  railItemLabel: { color: '#8e9192', fontSize: 9, fontWeight: '700', textTransform: 'uppercase' },
   confirmOverlay: { flex: 1, backgroundColor: 'rgba(12,12,13,0.82)', alignItems: 'center', justifyContent: 'center', padding: 24 },
   confirmCard: { width: '100%', maxWidth: 340, borderRadius: 28, borderWidth: 1, padding: 28, alignItems: 'center', gap: 8 },
   confirmIcon: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },

@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import {
+  AppNotification,
   ChatMessage,
   EmergencyCategory,
   EmergencyContact,
@@ -81,6 +82,10 @@ const CATEGORY_TO_TIPO: Record<EmergencyCategory, string> = {
   fire: 'Incendio',
   medical: 'Emergencia Médica',
   robbery: 'Robo',
+  suspicious_person: 'Persona Sospechosa',
+  violence: 'Violencia',
+  vandalism: 'Vandalismo',
+  other: 'Otro',
 };
 
 const TIPO_TO_CATEGORY: Record<string, EmergencyCategory> = {
@@ -88,6 +93,10 @@ const TIPO_TO_CATEGORY: Record<string, EmergencyCategory> = {
   Incendio: 'fire',
   'Emergencia Médica': 'medical',
   Robo: 'robbery',
+  'Persona Sospechosa': 'suspicious_person',
+  Violencia: 'violence',
+  Vandalismo: 'vandalism',
+  Otro: 'other',
 };
 
 const SEVERITY_TO_NIVEL: Record<IncidentSeverity, string> = {
@@ -199,12 +208,13 @@ type ContactoRow = {
   relacion: string | null;
   telefono: string;
   avatar_url: string | null;
+  notificar_en_sos?: boolean | null;
 };
 
 export async function fetchContacts(uid: string): Promise<EmergencyContact[]> {
   const { data } = await supabase
     .from('contactos_confianza')
-    .select('id_contacto, id_externo, nombre, relacion, telefono, avatar_url')
+    .select('id_contacto, id_externo, nombre, relacion, telefono, avatar_url, notificar_en_sos')
     .eq('id_usuario', uid)
     .order('id_contacto', { ascending: true });
   return (data ?? []).map((row) => {
@@ -221,6 +231,7 @@ export async function fetchContacts(uid: string): Promise<EmergencyContact[]> {
         .substring(0, 2)
         .toUpperCase(),
       avatarUrl: r.avatar_url ?? undefined,
+      notifyOnSos: r.notificar_en_sos ?? true,
     };
   });
 }
@@ -240,9 +251,49 @@ export async function saveContacts(uid: string, contacts: EmergencyContact[]): P
       relacion: c.relationship || null,
       telefono: c.phone,
       avatar_url: c.avatarUrl ?? null,
+      notificar_en_sos: c.notifyOnSos ?? true,
     }))
   );
   if (insErr) console.warn('saveContacts (insert):', insErr.message);
+}
+
+export async function saveSingleContact(uid: string, contact: EmergencyContact): Promise<void> {
+  const { data: existing } = await supabase
+    .from('contactos_confianza')
+    .select('id_contacto')
+    .eq('id_usuario', uid)
+    .eq('id_externo', contact.id)
+    .maybeSingle();
+
+  const payload = {
+    id_usuario: uid,
+    id_externo: contact.id,
+    nombre: contact.name,
+    relacion: contact.relationship || null,
+    telefono: contact.phone,
+    avatar_url: contact.avatarUrl ?? null,
+    notificar_en_sos: contact.notifyOnSos ?? true,
+  };
+
+  if (existing) {
+    const { error } = await supabase
+      .from('contactos_confianza')
+      .update(payload)
+      .eq('id_contacto', (existing as { id_contacto: number }).id_contacto);
+    if (error) console.warn('saveSingleContact (update):', error.message);
+  } else {
+    const { error } = await supabase.from('contactos_confianza').insert(payload);
+    if (error) console.warn('saveSingleContact (insert):', error.message);
+  }
+}
+
+export async function deleteSingleContact(uid: string, contactId: string): Promise<void> {
+  const { error } = await supabase
+    .from('contactos_confianza')
+    .delete()
+    .eq('id_usuario', uid)
+    .eq('id_externo', contactId);
+  if (error) console.warn('deleteSingleContact:', error.message);
 }
 
 // ---------------------------------------------------------------------------
@@ -444,5 +495,70 @@ export async function replaceAllReports(uid: string, reports: IncidentReport[]):
   }
   for (const report of reports) {
     await saveReport(uid, report);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Notificaciones (notificaciones)
+// ---------------------------------------------------------------------------
+
+export async function saveNotificationRecord(uid: string, notif: AppNotification): Promise<void> {
+  try {
+    let idReporte: number | null = null;
+    if (notif.relatedIncidentId) {
+      idReporte = await findReportLocalId(uid, notif.relatedIncidentId);
+    }
+    if (idReporte != null) {
+      const { error } = await supabase.from('notificaciones').insert({
+        id_reporte: idReporte,
+        canal: 'push',
+        mensaje: `${notif.title}: ${notif.message}`.substring(0, 255),
+        estado_envio: notif.read ? 'leido' : 'enviado',
+      });
+      if (error) console.warn('saveNotificationRecord:', error.message);
+    }
+  } catch (err) {
+    console.warn('saveNotificationRecord unexpected:', err);
+  }
+}
+
+export async function fetchNotifications(uid: string): Promise<AppNotification[]> {
+  try {
+    const { data, error } = await supabase
+      .from('notificaciones')
+      .select(
+        'id_notificacion, id_reporte, canal, mensaje, estado_envio, fecha_envio, reportes_emergencia!inner(id_usuario, datos_extra)'
+      )
+      .eq('reportes_emergencia.id_usuario', uid)
+      .order('fecha_envio', { ascending: false });
+
+    if (error || !data) return [];
+
+    return data.map((row: any) => {
+      const n = row as {
+        id_notificacion: number;
+        mensaje: string | null;
+        estado_envio: string;
+        fecha_envio: string;
+        reportes_emergencia?: { datos_extra?: Record<string, unknown> | null };
+      };
+      const parts = (n.mensaje ?? '').split(': ');
+      const title = parts.length > 1 ? parts[0] : 'ALERTA TÁCTICA';
+      const message = parts.length > 1 ? parts.slice(1).join(': ') : (n.mensaje ?? '');
+      const extra = n.reportes_emergencia?.datos_extra ?? {};
+      const relatedId = (extra as { id?: string }).id;
+      return {
+        id: `notif-db-${n.id_notificacion}`,
+        title,
+        message,
+        timestamp: new Date(n.fecha_envio).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        read: n.estado_envio === 'leido',
+        type: 'dispatch',
+        relatedIncidentId: relatedId,
+      };
+    });
+  } catch (err) {
+    console.warn('fetchNotifications:', err);
+    return [];
   }
 }

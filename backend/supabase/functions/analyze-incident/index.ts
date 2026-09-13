@@ -10,14 +10,20 @@
 //
 // Seguridad:
 //   - Requiere JWT de un usuario autenticado (verify_jwt = true).
-//   - Usa `GEMINI_API_KEY` desde los Secrets de Edge Functions (nunca en cliente).
+//   - Usa `GEMINI_API_KEY` desde los Secrets de Edge Functions (nunca en cliente,
+//     y SIN fallback hardcodeado en el código fuente).
 //   - La clave de Gemini va por la RUTA NATIVA (?key= o x-goog-api-key), ya que
 //     las claves Auth nuevas (prefijo AQ.) NO funcionan por rutas OpenAI-compatible.
+//
+// Resiliencia:
+//   - Timeout de 12s por intento contra Gemini (AbortController).
+//   - Reintento con backoff exponencial (hasta 2 veces) solo ante 503/UNAVAILABLE
+//     o error de red/timeout. No reintenta ante 4xx (error del propio request).
 // ---------------------------------------------------------------------------
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") || "";
-
+const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+// Modelo por defecto (flash = rápido/barato; habilita "thinking" si usas pro).
 const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-3.6-flash";
 const GEMINI_URL =
   Deno.env.get("GEMINI_API_URL") ||
@@ -74,6 +80,55 @@ confianza: 0.0-1.0 según qué tan segura estés de tu decisión. Identifica la 
 por sus nombres: traffic("Accidente de Tránsito"), fire("Incendio"), medical("Emergencia Médica"),
 robbery("Robo").`;
 
+// ---------------------------------------------------------------------------
+// Llama a Gemini con timeout por intento y reintento con backoff exponencial
+// ante 503 (UNAVAILABLE / alta demanda) o fallas de red/timeout.
+// ---------------------------------------------------------------------------
+async function callGeminiWithRetry(
+  url: string,
+  payload: unknown,
+  maxRetries = 1,
+  timeoutMs = 28000
+): Promise<Response> {
+  let lastErr: unknown;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+
+      // Reintentar solo si Gemini está saturado (503) y aún quedan intentos.
+      // Un 503 real suele responder rápido, así que reintentar aquí tiene sentido.
+      if (res.status === 503 && attempt < maxRetries) {
+        await new Promise((r) => setTimeout(r, 500 * 2 ** attempt));
+        continue;
+      }
+      return res;
+    } catch (err) {
+      clearTimeout(timer);
+      lastErr = err;
+      // Si fue timeout/abort (audio o imagen tardando en procesarse), NO reintentar:
+      // reintentar solo duplicaría la espera del usuario sin resolver la causa.
+      const isAbort = err instanceof Error && err.name === "AbortError";
+      if (isAbort) break;
+      if (attempt === maxRetries) break;
+      await new Promise((r) => setTimeout(r, 500 * 2 ** attempt));
+    }
+  }
+
+  throw lastErr instanceof Error
+    ? lastErr
+    : new Error("Gemini no respondió tras reintentos.");
+}
+
 Deno.serve(async (req: Request) => {
   // CORS para llamadas desde la app (expo) y test
   const corsHeaders = {
@@ -114,6 +169,7 @@ Deno.serve(async (req: Request) => {
     });
   }
 
+  // Sin fallback hardcodeado: si falta el secret, fallar explícito.
   if (!GEMINI_API_KEY) {
     return new Response(
       JSON.stringify({
@@ -135,6 +191,8 @@ Deno.serve(async (req: Request) => {
     fotoUrl?: string;
     fotoBase64?: string;
     mediaMimeType?: string;
+    videoBase64?: string;
+    videoMimeType?: string;
   };
   try {
     body = await req.json();
@@ -205,14 +263,42 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  const geminiRes = await fetch(`${GEMINI_URL}?key=${encodeURIComponent(GEMINI_API_KEY)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ parts }],
-      generationConfig: { temperature: 0.4, maxOutputTokens: 800 },
-    }),
-  });
+  // Soporte para video en base64 (enviado desde el cliente)
+  if (body.videoBase64) {
+    parts.push({
+      inline_data: {
+        mime_type: body.videoMimeType || "video/mp4",
+        data: body.videoBase64,
+      },
+    });
+  }
+
+  let geminiRes: Response;
+  try {
+    geminiRes = await callGeminiWithRetry(
+      `${GEMINI_URL}?key=${encodeURIComponent(GEMINI_API_KEY)}`,
+      {
+        contents: [{ parts }],
+        generationConfig: { temperature: 0.4, maxOutputTokens: 800 },
+      }
+    );
+  } catch (err) {
+    const isAbort = err instanceof Error && err.name === "AbortError";
+    console.error(
+      "gemini fetch failed:",
+      err instanceof Error ? err.message : err,
+      isAbort ? "(timeout)" : "(network)"
+    );
+    return new Response(
+      JSON.stringify({
+        error: isAbort
+          ? "El análisis de la IA está tardando más de lo esperado (audio/foto). Intenta de nuevo."
+          : "La IA no respondió a tiempo. Intenta nuevamente en unos segundos.",
+        fallback: true,
+      }),
+      { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
 
   if (!geminiRes.ok) {
     const errText = await geminiRes.text();

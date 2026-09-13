@@ -23,6 +23,9 @@ import {
   HeartPulse,
   ShieldAlert,
   HelpCircle,
+  UserX,
+  Swords,
+  Paintbrush,
   CheckCircle,
   Mic,
   Image as ImageIcon,
@@ -59,6 +62,10 @@ const CATEGORY_ICONS: Record<EmergencyCategory, any> = {
   fire: Flame,
   medical: HeartPulse,
   robbery: ShieldAlert,
+  suspicious_person: UserX,
+  violence: Swords,
+  vandalism: Paintbrush,
+  other: HelpCircle,
 };
 
 // Audio del chat (reproducido con expo-audio)

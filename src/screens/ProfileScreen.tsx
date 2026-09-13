@@ -9,6 +9,7 @@ import {
   Image,
   TextInput,
   Alert,
+  Platform,
 } from 'react-native';
 import Animated, { FadeIn, FadeInUp } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,8 +23,10 @@ import {
   Trash2,
   Image as ImageIcon,
   Upload,
+  AlertCircle,
+  Bell,
 } from 'lucide-react-native';
-import { UserProfile, EmergencyContact } from '../types';
+import { UserProfile, EmergencyContact, IncidentReport } from '../types';
 import { ANIME_AVATARS, DEFAULT_ANIME_AVATAR, avatarSource } from '../data/animeAvatars';
 
 // ---------------------------------------------------------------------------
@@ -36,7 +39,8 @@ import { ANIME_AVATARS, DEFAULT_ANIME_AVATAR, avatarSource } from '../data/anime
 
 interface ProfileScreenProps {
   userProfile: UserProfile;
-  onUpdateProfile?: (profile: UserProfile) => void;
+  reports?: IncidentReport[];
+  onUpdateProfile?: (profile: UserProfile, feedbackMessage?: string) => void;
   onCallContact: (name: string, phone?: string) => void;
   onOpenSettings: () => void;
   theme?: 'dark' | 'light';
@@ -91,8 +95,19 @@ const PRESET_AVATARS: AvatarPreset[] = [
   { id: 'av-24', name: 'Ronin', category: 'rpg', categoryLabel: 'RPG', url: 'https://api.dicebear.com/7.x/adventurer/png?seed=Ronin&backgroundColor=c0aede,d1d4f9' },
 ];
 
+export const RELATIONSHIP_PRESETS = [
+  'Familiar',
+  'Padre / Madre',
+  'Pareja',
+  'Hijo / Hija',
+  'Hermano / Hermana',
+  'Amigo / Amiga',
+  'Médico / Doctor',
+];
+
 export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   userProfile,
+  reports = [],
   onUpdateProfile,
   onCallContact,
   onOpenSettings,
@@ -100,6 +115,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const isLight = theme === 'light';
+
+  // Cálculos de actividad táctica (portado funcionalmente de arconde-gamc)
+  const totalReports = reports.length;
+  const activeReports = reports.filter((r) => r.status === 'in_progress').length;
+  const resolvedReports = reports.filter((r) => r.status === 'resolved' || r.status === 'closed').length;
+
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(userProfile.name);
   const [editPhone, setEditPhone] = useState(userProfile.phone);
@@ -110,22 +131,43 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [selectedAvatarCategory, setSelectedAvatarCategory] = useState<string>('all');
   const [editBannerUrl, setEditBannerUrl] = useState(userProfile.bannerUrl || PRESET_BANNERS[0]);
 
+  // Modal Añadir Contacto
   const [showAddContact, setShowAddContact] = useState(false);
   const [newContactName, setNewContactName] = useState('');
   const [newContactRel, setNewContactRel] = useState('');
   const [newContactPhone, setNewContactPhone] = useState('');
+  const [newContactNotifyOnSos, setNewContactNotifyOnSos] = useState(true);
   const [newContactAvatar, setNewContactAvatar] = useState(PRESET_AVATARS[0]?.url || DEFAULT_ANIME_AVATAR);
+  const [newContactErrors, setNewContactErrors] = useState<{ name?: string; phone?: string }>({});
 
+  // Modal Editar Contacto
   const [editingContact, setEditingContact] = useState<EmergencyContact | null>(null);
   const [editContactName, setEditContactName] = useState('');
   const [editContactRel, setEditContactRel] = useState('');
   const [editContactPhone, setEditContactPhone] = useState('');
+  const [editContactNotifyOnSos, setEditContactNotifyOnSos] = useState(true);
   const [editContactAvatar, setEditContactAvatar] = useState('');
+  const [editContactErrors, setEditContactErrors] = useState<{ name?: string; phone?: string }>({});
 
   const textMuted = '#8e9192';
   const cardBg = isLight ? 'rgba(255,255,255,0.9)' : 'rgba(20,20,22,0.9)';
   const cardBorder = isLight ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.15)';
   const fg = isLight ? '#000' : '#fff';
+
+  const validateContactInput = (name: string, phone: string) => {
+    const errors: { name?: string; phone?: string } = {};
+    if (!name.trim() || name.trim().length < 2) {
+      errors.name = 'El nombre debe contener al menos 2 caracteres.';
+    }
+    const cleanPhone = phone.trim();
+    const phoneRegex = /^[+]?[\d\s().-]{7,20}$/;
+    if (!cleanPhone) {
+      errors.phone = 'El teléfono es obligatorio.';
+    } else if (!phoneRegex.test(cleanPhone)) {
+      errors.phone = 'Ingresa un teléfono válido (mínimo 7 dígitos).';
+    }
+    return errors;
+  };
 
   const handleOpenEditModal = () => {
     setEditName(userProfile.name);
@@ -139,16 +181,19 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   };
 
   const handleSaveProfile = () => {
-    onUpdateProfile?.({
-      ...userProfile,
-      name: editName,
-      phone: editPhone,
-      email: editEmail,
-      bloodType: editBloodType,
-      allergies: editAllergies,
-      avatarUrl: editAvatarUrl,
-      bannerUrl: editBannerUrl,
-    });
+    onUpdateProfile?.(
+      {
+        ...userProfile,
+        name: editName.trim(),
+        phone: editPhone.trim(),
+        email: editEmail.trim(),
+        bloodType: editBloodType,
+        allergies: editAllergies.trim(),
+        avatarUrl: editAvatarUrl,
+        bannerUrl: editBannerUrl,
+      },
+      'PERFIL GUARDADO CON ÉXITO'
+    );
     setIsEditing(false);
   };
 
@@ -179,7 +224,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       .toUpperCase();
 
   const handleAddContact = () => {
-    if (!newContactName.trim() || !newContactPhone.trim()) return;
+    const errors = validateContactInput(newContactName, newContactPhone);
+    if (Object.keys(errors).length > 0) {
+      setNewContactErrors(errors);
+      return;
+    }
+    setNewContactErrors({});
     const newContact: EmergencyContact = {
       id: `cnt-${Date.now()}`,
       name: newContactName.trim(),
@@ -187,14 +237,19 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       phone: newContactPhone.trim(),
       initials: getInitials(newContactName),
       avatarUrl: newContactAvatar || PRESET_AVATARS[0]?.url,
+      notifyOnSos: newContactNotifyOnSos,
     };
-    onUpdateProfile?.({
-      ...userProfile,
-      emergencyContacts: [...userProfile.emergencyContacts, newContact],
-    });
+    onUpdateProfile?.(
+      {
+        ...userProfile,
+        emergencyContacts: [...userProfile.emergencyContacts, newContact],
+      },
+      `CONTACTO AÑADIDO: ${newContact.name.toUpperCase()}`
+    );
     setNewContactName('');
     setNewContactRel('');
     setNewContactPhone('');
+    setNewContactNotifyOnSos(true);
     setShowAddContact(false);
   };
 
@@ -203,11 +258,19 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     setEditContactName(contact.name);
     setEditContactRel(contact.relationship);
     setEditContactPhone(contact.phone);
+    setEditContactNotifyOnSos(contact.notifyOnSos !== false);
     setEditContactAvatar(contact.avatarUrl || PRESET_AVATARS[0]?.url || '');
+    setEditContactErrors({});
   };
 
   const handleSaveContactEdit = () => {
-    if (!editingContact || !editContactName.trim() || !editContactPhone.trim()) return;
+    if (!editingContact) return;
+    const errors = validateContactInput(editContactName, editContactPhone);
+    if (Object.keys(errors).length > 0) {
+      setEditContactErrors(errors);
+      return;
+    }
+    setEditContactErrors({});
     const updatedContacts = userProfile.emergencyContacts.map((c) =>
       c.id === editingContact.id
         ? {
@@ -217,18 +280,42 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             phone: editContactPhone.trim(),
             initials: getInitials(editContactName),
             avatarUrl: editContactAvatar || c.avatarUrl,
+            notifyOnSos: editContactNotifyOnSos,
           }
         : c
     );
-    onUpdateProfile?.({ ...userProfile, emergencyContacts: updatedContacts });
+    onUpdateProfile?.(
+      { ...userProfile, emergencyContacts: updatedContacts },
+      `CONTACTO ACTUALIZADO: ${editContactName.trim().toUpperCase()}`
+    );
     setEditingContact(null);
   };
 
-  const handleDeleteContact = (id: string) => {
-    onUpdateProfile?.({
-      ...userProfile,
-      emergencyContacts: userProfile.emergencyContacts.filter((c) => c.id !== id),
-    });
+  const confirmDeleteContact = (contact: EmergencyContact) => {
+    const doDelete = () => {
+      onUpdateProfile?.(
+        {
+          ...userProfile,
+          emergencyContacts: userProfile.emergencyContacts.filter((c) => c.id !== contact.id),
+        },
+        'CONTACTO ELIMINADO'
+      );
+    };
+
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.confirm(`¿Deseas eliminar a ${contact.name} de tus contactos de emergencia?`)) {
+        doDelete();
+      }
+    } else {
+      Alert.alert(
+        'Eliminar Contacto',
+        `¿Deseas eliminar a ${contact.name} de tus contactos de confianza?`,
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Eliminar', style: 'destructive', onPress: doDelete },
+        ]
+      );
+    }
   };
 
   const renderAvatarPicker = (avatar: string, onChange: (v: string) => void) => (
@@ -315,11 +402,29 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           </View>
         </View>
 
+        {/* Estadísticas de actividad táctica (portado funcionalmente de arconde-gamc) */}
+        <View style={[styles.statsRowCard, { backgroundColor: cardBg, borderColor: cardBorder }]}>
+          <View style={styles.statCol}>
+            <Text style={[styles.statNumber, { color: fg }]}>{totalReports}</Text>
+            <Text style={[styles.statLabel, { color: textMuted }]}>TOTAL REPORTES</Text>
+          </View>
+          <View style={[styles.statDivider, { backgroundColor: cardBorder }]} />
+          <View style={styles.statCol}>
+            <Text style={[styles.statNumber, { color: '#f59e0b' }]}>{activeReports}</Text>
+            <Text style={[styles.statLabel, { color: '#f59e0b' }]}>EN CURSO</Text>
+          </View>
+          <View style={[styles.statDivider, { backgroundColor: cardBorder }]} />
+          <View style={styles.statCol}>
+            <Text style={[styles.statNumber, { color: '#10b981' }]}>{resolvedReports}</Text>
+            <Text style={[styles.statLabel, { color: '#10b981' }]}>RESUELTOS</Text>
+          </View>
+        </View>
+
         {/* Contactos de emergencia */}
         <View style={styles.contactsHeader}>
           <View>
-            <Text style={[styles.sectionTitle, { color: fg }]}>Contactos de Emergencia</Text>
-            <Text style={styles.sectionSubtitle}>Notificación automática, edición y llamada directa</Text>
+            <Text style={[styles.sectionTitle, { color: fg }]}>Contactos de Confianza</Text>
+            <Text style={styles.sectionSubtitle}>Notificación automática SOS, edición y llamada directa</Text>
           </View>
           <TouchableOpacity
             style={[styles.addContactButton, { backgroundColor: isLight ? '#000' : '#fff' }]}
@@ -327,7 +432,9 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               setNewContactName('');
               setNewContactRel('');
               setNewContactPhone('');
+              setNewContactNotifyOnSos(true);
               setNewContactAvatar(PRESET_AVATARS[0]?.url || DEFAULT_ANIME_AVATAR);
+              setNewContactErrors({});
               setShowAddContact(true);
             }}
           >
@@ -339,7 +446,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           {userProfile.emergencyContacts.length === 0 ? (
             <View style={[styles.contactCard, { backgroundColor: cardBg, borderColor: cardBorder, paddingVertical: 20, alignItems: 'center' }]}>
               <Text style={{ color: '#8e9192', fontSize: 13 }}>No hay contactos de emergencia registrados</Text>
-              <Text style={{ color: '#8e9192', fontSize: 11, marginTop: 4 }}>Presiona + para agregar uno</Text>
+              <Text style={{ color: '#8e9192', fontSize: 11, marginTop: 4 }}>Presiona + para agregar un contacto de confianza</Text>
             </View>
           ) : userProfile.emergencyContacts.map((contact, i) => (
             <Animated.View
@@ -362,9 +469,17 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                     {contact.name}
                   </Text>
                   <Text style={styles.contactMeta}>{contact.relationship}</Text>
-                  <Text style={styles.contactMeta} numberOfLines={1}>
-                    {contact.phone}
-                  </Text>
+                  <View style={styles.phoneMetaRow}>
+                    <Text style={styles.contactMeta} numberOfLines={1}>
+                      {contact.phone}
+                    </Text>
+                    {contact.notifyOnSos !== false && (
+                      <View style={styles.sosChip}>
+                        <Bell size={9} color="#10b981" />
+                        <Text style={styles.sosChipText}>AUTO SOS</Text>
+                      </View>
+                    )}
+                  </View>
                 </View>
               </View>
 
@@ -386,7 +501,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.deleteIconButton}
-                  onPress={() => handleDeleteContact(contact.id)}
+                  onPress={() => confirmDeleteContact(contact)}
                 >
                   <Trash2 size={14} color="#8e9192" />
                 </TouchableOpacity>
@@ -566,7 +681,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           <ScrollView contentContainerStyle={styles.modalScrollContent}>
             <Animated.View entering={FadeIn.duration(200)} style={[styles.modalCard, { backgroundColor: isLight ? '#f7f7f8' : '#141416', borderColor: cardBorder }]}>
               <View style={[styles.modalHeader, { borderBottomColor: cardBorder }]}>
-                <Text style={[styles.modalTitle, { color: fg }]}>Nuevo Contacto</Text>
+                <View>
+                  <Text style={[styles.modalTitle, { color: fg }]}>Nuevo Contacto</Text>
+                  <Text style={styles.modalSubtitle}>Agrega un contacto para notificaciones de emergencia</Text>
+                </View>
                 <TouchableOpacity
                   style={[styles.modalCloseButton, { backgroundColor: isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.1)' }]}
                   onPress={() => setShowAddContact(false)}
@@ -574,10 +692,101 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                   <X size={16} color={fg} />
                 </TouchableOpacity>
               </View>
-              <View style={{ gap: 10 }}>
-                <LabeledInput label="Nombre" value={newContactName} onChangeText={setNewContactName} isLight={isLight} />
-                <LabeledInput label="Relación" value={newContactRel} onChangeText={setNewContactRel} isLight={isLight} />
-                <LabeledInput label="Teléfono" value={newContactPhone} onChangeText={setNewContactPhone} isLight={isLight} keyboardType="phone-pad" />
+              <View style={{ gap: 12 }}>
+                <LabeledInput
+                  label="Nombre Completo *"
+                  value={newContactName}
+                  onChangeText={(v) => {
+                    setNewContactName(v);
+                    if (newContactErrors.name) setNewContactErrors((p) => ({ ...p, name: undefined }));
+                  }}
+                  isLight={isLight}
+                  placeholder="Ej: Laura Vargas"
+                  error={newContactErrors.name}
+                />
+
+                <View>
+                  <Text style={styles.inputLabel}>Relación o Parentesco</Text>
+                  <TextInput
+                    value={newContactRel}
+                    onChangeText={setNewContactRel}
+                    placeholder="Ej: Madre, Pareja, Hermano"
+                    placeholderTextColor="#8e9192"
+                    style={[
+                      styles.textInput,
+                      {
+                        backgroundColor: isLight ? '#fff' : 'rgba(255,255,255,0.05)',
+                        borderColor: isLight ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.15)',
+                        color: isLight ? '#000' : '#fff',
+                      },
+                    ]}
+                  />
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, marginTop: 8 }}>
+                    {RELATIONSHIP_PRESETS.map((preset) => (
+                      <TouchableOpacity
+                        key={preset}
+                        onPress={() => setNewContactRel(preset)}
+                        style={[
+                          styles.presetRelChip,
+                          {
+                            backgroundColor: newContactRel === preset ? fg : isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.05)',
+                            borderColor: newContactRel === preset ? fg : cardBorder,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 10,
+                            fontWeight: '700',
+                            color: newContactRel === preset ? (isLight ? '#fff' : '#000') : textMuted,
+                          }}
+                        >
+                          {preset}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+
+                <LabeledInput
+                  label="Teléfono de Emergencia *"
+                  value={newContactPhone}
+                  onChangeText={(v) => {
+                    setNewContactPhone(v);
+                    if (newContactErrors.phone) setNewContactErrors((p) => ({ ...p, phone: undefined }));
+                  }}
+                  isLight={isLight}
+                  keyboardType="phone-pad"
+                  placeholder="+591 70000000"
+                  error={newContactErrors.phone}
+                />
+
+                {/* Toggle SOS automático */}
+                <View style={[styles.toggleContainer, { backgroundColor: isLight ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.03)', borderColor: cardBorder }]}>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <Text style={[styles.toggleTitle, { color: fg }]}>Notificar en caso de SOS</Text>
+                    <Text style={styles.toggleSubtitle}>Envía alerta y ubicación automática cuando se active el botón de pánico</Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => setNewContactNotifyOnSos(!newContactNotifyOnSos)}
+                    style={[
+                      styles.tacticalSwitch,
+                      {
+                        backgroundColor: newContactNotifyOnSos ? '#10b981' : isLight ? '#d1d5db' : '#27272a',
+                      },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.tacticalSwitchThumb,
+                        {
+                          transform: [{ translateX: newContactNotifyOnSos ? 18 : 2 }],
+                        },
+                      ]}
+                    />
+                  </TouchableOpacity>
+                </View>
+
                 {renderAvatarPicker(newContactAvatar, setNewContactAvatar)}
               </View>
               <TouchableOpacity
@@ -599,7 +808,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           <ScrollView contentContainerStyle={styles.modalScrollContent}>
             <Animated.View entering={FadeIn.duration(200)} style={[styles.modalCard, { backgroundColor: isLight ? '#f7f7f8' : '#141416', borderColor: cardBorder }]}>
               <View style={[styles.modalHeader, { borderBottomColor: cardBorder }]}>
-                <Text style={[styles.modalTitle, { color: fg }]}>Editar Contacto</Text>
+                <View>
+                  <Text style={[styles.modalTitle, { color: fg }]}>Editar Contacto</Text>
+                  <Text style={styles.modalSubtitle}>Modifica los datos y preferencias del contacto</Text>
+                </View>
                 <TouchableOpacity
                   style={[styles.modalCloseButton, { backgroundColor: isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.1)' }]}
                   onPress={() => setEditingContact(null)}
@@ -607,10 +819,99 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                   <X size={16} color={fg} />
                 </TouchableOpacity>
               </View>
-              <View style={{ gap: 10 }}>
-                <LabeledInput label="Nombre" value={editContactName} onChangeText={setEditContactName} isLight={isLight} />
-                <LabeledInput label="Relación" value={editContactRel} onChangeText={setEditContactRel} isLight={isLight} />
-                <LabeledInput label="Teléfono" value={editContactPhone} onChangeText={setEditContactPhone} isLight={isLight} keyboardType="phone-pad" />
+              <View style={{ gap: 12 }}>
+                <LabeledInput
+                  label="Nombre Completo *"
+                  value={editContactName}
+                  onChangeText={(v) => {
+                    setEditContactName(v);
+                    if (editContactErrors.name) setEditContactErrors((p) => ({ ...p, name: undefined }));
+                  }}
+                  isLight={isLight}
+                  error={editContactErrors.name}
+                />
+
+                <View>
+                  <Text style={styles.inputLabel}>Relación o Parentesco</Text>
+                  <TextInput
+                    value={editContactRel}
+                    onChangeText={setEditContactRel}
+                    placeholder="Ej: Madre, Pareja, Hermano"
+                    placeholderTextColor="#8e9192"
+                    style={[
+                      styles.textInput,
+                      {
+                        backgroundColor: isLight ? '#fff' : 'rgba(255,255,255,0.05)',
+                        borderColor: isLight ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.15)',
+                        color: isLight ? '#000' : '#fff',
+                      },
+                    ]}
+                  />
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, marginTop: 8 }}>
+                    {RELATIONSHIP_PRESETS.map((preset) => (
+                      <TouchableOpacity
+                        key={preset}
+                        onPress={() => setEditContactRel(preset)}
+                        style={[
+                          styles.presetRelChip,
+                          {
+                            backgroundColor: editContactRel === preset ? fg : isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.05)',
+                            borderColor: editContactRel === preset ? fg : cardBorder,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 10,
+                            fontWeight: '700',
+                            color: editContactRel === preset ? (isLight ? '#fff' : '#000') : textMuted,
+                          }}
+                        >
+                          {preset}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+
+                <LabeledInput
+                  label="Teléfono de Emergencia *"
+                  value={editContactPhone}
+                  onChangeText={(v) => {
+                    setEditContactPhone(v);
+                    if (editContactErrors.phone) setEditContactErrors((p) => ({ ...p, phone: undefined }));
+                  }}
+                  isLight={isLight}
+                  keyboardType="phone-pad"
+                  error={editContactErrors.phone}
+                />
+
+                {/* Toggle SOS automático */}
+                <View style={[styles.toggleContainer, { backgroundColor: isLight ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.03)', borderColor: cardBorder }]}>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <Text style={[styles.toggleTitle, { color: fg }]}>Notificar en caso de SOS</Text>
+                    <Text style={styles.toggleSubtitle}>Envía alerta y ubicación automática cuando se active el botón de pánico</Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => setEditContactNotifyOnSos(!editContactNotifyOnSos)}
+                    style={[
+                      styles.tacticalSwitch,
+                      {
+                        backgroundColor: editContactNotifyOnSos ? '#10b981' : isLight ? '#d1d5db' : '#27272a',
+                      },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.tacticalSwitchThumb,
+                        {
+                          transform: [{ translateX: editContactNotifyOnSos ? 18 : 2 }],
+                        },
+                      ]}
+                    />
+                  </TouchableOpacity>
+                </View>
+
                 {renderAvatarPicker(editContactAvatar, setEditContactAvatar)}
               </View>
               <TouchableOpacity
@@ -629,30 +930,39 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   );
 };
 
-// Input reutilizable con etiqueta, equivalente a los <label>+<input> del original
+// Input reutilizable con etiqueta, soporte de errores y placeholder
 const LabeledInput: React.FC<{
   label: string;
   value: string;
   onChangeText: (v: string) => void;
   isLight: boolean;
   keyboardType?: 'default' | 'phone-pad' | 'email-address';
-}> = ({ label, value, onChangeText, isLight, keyboardType = 'default' }) => (
+  placeholder?: string;
+  error?: string;
+}> = ({ label, value, onChangeText, isLight, keyboardType = 'default', placeholder, error }) => (
   <View>
     <Text style={styles.inputLabel}>{label}</Text>
     <TextInput
       value={value}
       onChangeText={onChangeText}
       keyboardType={keyboardType}
+      placeholder={placeholder}
       placeholderTextColor="#8e9192"
       style={[
         styles.textInput,
         {
           backgroundColor: isLight ? '#fff' : 'rgba(255,255,255,0.05)',
           color: isLight ? '#000' : '#fff',
-          borderColor: isLight ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.15)',
+          borderColor: error ? '#ef4444' : isLight ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.15)',
         },
       ]}
     />
+    {error ? (
+      <View style={styles.inputErrorRow}>
+        <AlertCircle size={11} color="#ef4444" />
+        <Text style={styles.inputErrorText}>{error}</Text>
+      </View>
+    ) : null}
   </View>
 );
 
@@ -792,4 +1102,111 @@ const styles = StyleSheet.create({
   bloodTypeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   bloodTypeChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, borderWidth: 1 },
   saveButton: { marginTop: 18, paddingVertical: 14, borderRadius: 28, alignItems: 'center', justifyContent: 'center' },
+  statsRowCard: {
+    marginHorizontal: 0,
+    marginTop: 0,
+    marginBottom: 20,
+    borderRadius: 20,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+  },
+  statCol: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statDivider: {
+    width: 1,
+    height: 28,
+  },
+  statNumber: {
+    fontSize: 18,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  statLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    marginTop: 3,
+    textTransform: 'uppercase',
+  },
+  phoneMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 2,
+  },
+  sosChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: 'rgba(16,185,129,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(16,185,129,0.3)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  sosChipText: {
+    color: '#10b981',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  presetRelChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  toggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    marginTop: 4,
+  },
+  toggleTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  toggleSubtitle: {
+    fontSize: 10,
+    color: '#8e9192',
+    marginTop: 2,
+  },
+  tacticalSwitch: {
+    width: 44,
+    height: 26,
+    borderRadius: 13,
+    justifyContent: 'center',
+  },
+  tacticalSwitchThumb: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 1 },
+  },
+  inputErrorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 4,
+  },
+  inputErrorText: {
+    color: '#ef4444',
+    fontSize: 10,
+    fontWeight: '600',
+  },
 });

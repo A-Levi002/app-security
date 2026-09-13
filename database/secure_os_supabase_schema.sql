@@ -134,7 +134,11 @@ INSERT INTO tipos_emergencia (nombre, descripcion) VALUES
     ('Accidente de Tránsito', 'Colisión o incidente vehicular en vía pública'),
     ('Incendio', 'Conato o incendio activo en estructura o terreno'),
     ('Emergencia Médica', 'Asistencia médica de urgencia para una persona'),
-    ('Robo', 'Robo, asalto o hurto en curso')
+    ('Robo', 'Robo, asalto o hurto en curso'),
+    ('Persona Sospechosa', 'Merodeo, acecho o conducta anómala'),
+    ('Violencia', 'Conflicto físico o agresión en curso'),
+    ('Vandalismo', 'Daños a propiedad o vía pública'),
+    ('Otro', 'Situación imprevista de seguridad')
 ON CONFLICT (nombre) DO NOTHING;
 
 INSERT INTO niveles_gravedad (nombre, prioridad_numerica) VALUES
