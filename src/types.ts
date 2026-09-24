@@ -9,7 +9,16 @@ export type EmergencyCategory =
   | 'suspicious_person'
   | 'violence'
   | 'vandalism'
+  | 'ambiental'
   | 'other';
+
+// ODS 12 — Subtipos de incidentes ambientales (categoría 'ambiental').
+export type EnvironmentalSubtype =
+  | 'derrame_quimico'
+  | 'fuga_gas'
+  | 'quema_residuos'
+  | 'botadero_ilegal'
+  | 'contaminacion_agua_suelo';
 
 export type IncidentStatus = 'in_progress' | 'resolved' | 'closed';
 
@@ -60,6 +69,10 @@ export interface IncidentReport {
   originDepot: string;
   etaMinutes: number;
   etaSeconds: number;
+  // ETA persistente basada en reloj real: total en segundos y marca de inicio.
+  // Sin estos campos el contador solo avanzaba con el chat abierto.
+  etaTotalSeconds?: number;
+  etaStartedAt?: number;
   location: string;
   coordinates: {
     lat: number;
@@ -68,6 +81,8 @@ export interface IncidentReport {
   audioNote?: string;
   imageUrl?: string;
   aiVoiceMessage?: string;
+  /** ODS 12: presente solo cuando category === 'ambiental' */
+  subtipoAmbiental?: EnvironmentalSubtype;
   chat?: ChatMessage[];
 }
 

@@ -15,17 +15,16 @@ móvil **Expo / React Native** (SDK 57), backend en **Supabase**.
 │   ├── data/                # datos semilla y avatares
 │   ├── hooks/               # persistencia local (AsyncStorage)
 │   └── types.ts             # modelo de dominio compartido
-├── database/                # BD — esquema Supabase + migración (ver README)
-├── backend/                 # BACKEND — Edge Functions (supabase/) + contratos (functions/)
+├── backend/                 # BACKEND — Edge Functions (supabase/), BD (database/) y contratos (functions/)
 └── secure_os/               # prototipo web de referencia (Vite, fuera del build)
 ```
 
 | Capa | Ubicación | Estado |
 | --- | --- | --- |
 | Frontend | `src/` | Implementado (flujo completo: boot → setup → login → permisos → home) |
-| Base de datos | `database/` | Esquema + migración listos (RLS, triggers, vistas, auditoría) |
-| Backend (IA chat) | `backend/supabase/functions/analyze-incident/` | **Implementada** (Gemini) |
-| Backend (resto) | `backend/` | Guía/contratos — dispatch, sos, notify, iot-ingest pendientes |
+| Base de datos | `backend/database/` | Esquema + migraciones listos (RLS, triggers, vistas, auditoría) |
+| Backend Edge Functions | `backend/supabase/functions/` | **7 funciones implementadas** (LangChain + Gemini) |
+| Backend (contratos) | `backend/functions/` | Referencia de contratos para despacho, sos, notify, iot-ingest |
 
 ## Cómo correr el frontend
 
@@ -41,18 +40,22 @@ También: `npm run android` (build nativo, necesario para expo-audio),
 ## Base de datos
 
 Aplica el esquema y la migración en el SQL Editor de Supabase, en ese orden.
-Ver `database/README.md` para detalles.
+Ver `backend/database/README.md` para detalles.
 
 ## Backend
 
-- La **IA del chat** está implementada: `backend/supabase/functions/analyze-incident/`
-  (Edge Function que clasifica el incidente con Gemini y escribe en
-  `analisis_ia` / `reportes_emergencia`). La clave de Gemini va en **Secrets**
-  de Supabase (nunca en el cliente). Ver su `README.md`.
-- Los demás flujos (despacho, push, SOS, IoT) siguen **simulados en el
-  frontend** para la demo. El equipo de backend los implementa según los
-  contratos en `backend/functions/*/README.md` y el mapa de responsabilidades
-  en `backend/README.md`.
+Todo el muta de datos del flujo ciudadano pasa por **Edge Functions**
+(`backend/supabase/functions/`): reports, profile, contacts, settings,
+notifications y las dos de IA (`analyze-incident`, `ai-respond`, ambas con
+**LangChain** → Gemini). El frontend (`src/lib/db.ts`) es un cliente fino
+que solo invoca funciones; ya no accede a tablas.
+
+- La clave de Gemini va en **Secrets** de Supabase (`GEMINI_API_KEY`), nunca
+  en el cliente.
+- Despliegue: `npm run deploy:all` (requiere `npx supabase login`). Ver
+  `backend/README.md` para el checklist.
+- Los demás flujos institucionales (despacho, push, SOS, IoT) siguen
+  **simulados en el frontend** para la demo (contratos en `backend/functions/`).
 
 ## Documentación aplicable
 

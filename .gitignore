@@ -37,6 +37,12 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
+# deno (edge functions)
+deno.lock
+
+# local supabase CLI (link/login metadata)
+backend/supabase/.temp/
+
 example
 
 # generated native folders

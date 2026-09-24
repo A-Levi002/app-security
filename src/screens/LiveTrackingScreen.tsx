@@ -13,11 +13,8 @@ import Animated, {
   Layout,
 } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as Speech from 'expo-speech';
 import {
   Phone,
-  Volume2,
-  VolumeX,
   CheckCircle,
   Navigation,
   MapPin,
@@ -25,6 +22,7 @@ import {
   ArrowLeft,
   ChevronDown,
   ChevronUp,
+  Search,
 } from 'lucide-react-native';
 import { IncidentReport } from '../types';
 import { IncidentMap } from '../components/IncidentMap';
@@ -36,7 +34,7 @@ import { IncidentMap } from '../components/IncidentMap';
 // - framer-motion (motion/react) -> react-native-reanimated (FadeIn/Layout)
 // - window.speechSynthesis -> expo-speech (Speech.speak)
 // - Gradiente CSS -> expo-linear-gradient
-// - IncidentMap ahora usa react-native-maps (ver IncidentMap.tsx)
+// - IncidentMap usa MapLibre con tiles gratuitos (ver IncidentMap.tsx)
 // ---------------------------------------------------------------------------
 
 interface LiveTrackingScreenProps {
@@ -44,6 +42,7 @@ interface LiveTrackingScreenProps {
   onContactUnit: (unit: string) => void;
   onResolveIncident: (id: string) => void;
   onBackToHome: () => void;
+  onRequestPlaceSearch?: () => void;
 }
 
 export const LiveTrackingScreen: React.FC<LiveTrackingScreenProps> = ({
@@ -51,12 +50,20 @@ export const LiveTrackingScreen: React.FC<LiveTrackingScreenProps> = ({
   onContactUnit,
   onResolveIncident,
   onBackToHome,
+  onRequestPlaceSearch,
 }) => {
   const insets = useSafeAreaInsets();
-  const [secondsRemaining, setSecondsRemaining] = useState(
-    incident.status === 'resolved' ? 0 : (incident.etaMinutes || 0) * 60 + (incident.etaSeconds || 0)
-  );
-  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [secondsRemaining, setSecondsRemaining] = useState(() => {
+    if (incident.status === 'resolved') return 0;
+    // ETA por reloj real: descuenta aunque el chat esté cerrado.
+    if (incident.etaTotalSeconds && incident.etaStartedAt && incident.etaTotalSeconds > 0) {
+      return Math.max(
+        0,
+        incident.etaTotalSeconds - Math.floor((Date.now() - incident.etaStartedAt) / 1000)
+      );
+    }
+    return (incident.etaMinutes || 0) * 60 + (incident.etaSeconds || 0);
+  });
   const [currentStage, setCurrentStage] = useState<'despachada' | 'en_ruta' | 'en_sitio'>(
     incident.status === 'resolved' ? 'en_sitio' : 'en_ruta'
   );
@@ -78,32 +85,12 @@ export const LiveTrackingScreen: React.FC<LiveTrackingScreenProps> = ({
     return () => clearInterval(timer);
   }, [secondsRemaining, incident.status]);
 
-  // Voz de asistencia táctica (reemplaza window.speechSynthesis)
-  const playCalmingVoice = () => {
-    if (isPlayingAudio) {
-      Speech.stop();
-      setIsPlayingAudio(false);
-      return;
-    }
-
-    const messageText =
-      incident.aiVoiceMessage ||
-      'Unidad de emergencia en camino. Mantenga la calma.';
-
-    setIsPlayingAudio(true);
-    Speech.speak(messageText, {
-      language: 'es-ES',
-      rate: 0.95,
-      pitch: 1.0,
-      onDone: () => setIsPlayingAudio(false),
-      onStopped: () => setIsPlayingAudio(false),
-      onError: () => setIsPlayingAudio(false),
-    });
-  };
+  // Voz de asistencia táctica eliminada: el botón "Asistente IA" no era necesario
+  // y agregaba fricción al flujo satelital. La unidad se comunica vía el chat CORE.
 
   useEffect(() => {
     return () => {
-      Speech.stop();
+      // sin limpieza de speech (botón eliminado)
     };
   }, []);
 
@@ -115,11 +102,16 @@ export const LiveTrackingScreen: React.FC<LiveTrackingScreenProps> = ({
 
   const coords = incident.coordinates || { lat: 19.4326, lng: -99.1332 };
 
+  // Altura real de la tarjeta HUD (medida con onLayout): sirve para elevar los
+  // controles del mapa por encima de ella sin tapar botones.
+  const [hudHeight, setHudHeight] = useState(240);
+
   return (
     <View style={styles.container}>
       {/* 1. Mapa satelital/táctico a pantalla completa */}
       <View style={StyleSheet.absoluteFill}>
         <IncidentMap
+          key={`${coords.lat},${coords.lng}`}
           coordinates={coords}
           locationName={incident.location}
           category={incident.category}
@@ -130,6 +122,9 @@ export const LiveTrackingScreen: React.FC<LiveTrackingScreenProps> = ({
           showControls
           fullScreen
           initialLayer="satellite"
+          // Eleva el rail de controles y las coordenadas por encima del HUD:
+          // alto de la tarjeta (~240 px) + margen + safe area inferior.
+          bottomSafeOffset={hudHeight + insets.bottom + 8}
         />
         {/* Viñeta sutil arriba/abajo */}
         <LinearGradient
@@ -154,26 +149,18 @@ export const LiveTrackingScreen: React.FC<LiveTrackingScreenProps> = ({
           </View>
           <Text style={styles.headerSubtitle}>SEGUIMIENTO EN TIEMPO REAL</Text>
         </View>
-
-        <TouchableOpacity
-          onPress={playCalmingVoice}
-          activeOpacity={0.8}
-          style={[styles.voiceButton, isPlayingAudio && styles.voiceButtonActive]}
-        >
-          {isPlayingAudio ? (
-            <Volume2 size={14} color="#fff" />
-          ) : (
-            <VolumeX size={14} color="#fff" />
-          )}
-          <Text style={styles.voiceButtonText}>
-            {isPlayingAudio ? 'Hablando' : 'Asistente IA'}
-          </Text>
-        </TouchableOpacity>
       </View>
 
       {/* 3. HUD flotante inferior */}
       <View style={styles.hudWrapper}>
-        <Animated.View entering={FadeInDown.duration(350)} style={styles.hudCard}>
+        <Animated.View
+          entering={FadeInDown.duration(350)}
+          style={styles.hudCard}
+          onLayout={(e) => {
+            const h = e.nativeEvent.layout.height;
+            if (h > 0 && Math.abs(h - hudHeight) > 1) setHudHeight(h);
+          }}
+        >
           {/* Fila 1: Unidad + ETA */}
           <View style={styles.row}>
             <View style={styles.unitInfo}>
@@ -314,6 +301,17 @@ export const LiveTrackingScreen: React.FC<LiveTrackingScreenProps> = ({
               <Text style={styles.contactButtonText}>CONTACTAR UNIDAD</Text>
             </TouchableOpacity>
 
+            {onRequestPlaceSearch && (
+              <TouchableOpacity
+                style={styles.searchButton}
+                activeOpacity={0.85}
+                onPress={onRequestPlaceSearch}
+              >
+                <Search size={14} color="#c4c7c8" />
+                <Text style={styles.searchButtonText}>BUSCAR COORDENADAS</Text>
+              </TouchableOpacity>
+            )}
+
             <TouchableOpacity
               style={styles.resolveButton}
               activeOpacity={0.85}
@@ -386,26 +384,6 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 1.5,
     fontWeight: '700',
-  },
-  voiceButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-    backgroundColor: 'rgba(19,19,19,0.85)',
-  },
-  voiceButtonActive: {
-    backgroundColor: '#ef4444',
-    borderColor: '#f87171',
-  },
-  voiceButtonText: {
-    color: '#fff',
-    fontSize: 10,
-    textTransform: 'uppercase',
   },
   hudWrapper: {
     zIndex: 30,
@@ -612,6 +590,25 @@ const styles = StyleSheet.create({
     color: '#6ee7b7',
     fontWeight: '800',
     fontSize: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  searchButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  searchButtonText: {
+    color: '#c4c7c8',
+    fontWeight: '700',
+    fontSize: 9,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },

@@ -7,9 +7,37 @@ project_id = "app-security"
 verify_jwt = true
 import_map = "./functions/analyze-incident/deno.json"
 
+[functions.ai-respond]
+verify_jwt = true
+import_map = "./functions/ai-respond/deno.json"
+
+[functions.reports]
+verify_jwt = true
+import_map = "./functions/reports/deno.json"
+
+[functions.profile]
+verify_jwt = true
+import_map = "./functions/profile/deno.json"
+
+[functions.contacts]
+verify_jwt = true
+import_map = "./functions/contacts/deno.json"
+
+[functions.settings]
+verify_jwt = true
+import_map = "./functions/settings/deno.json"
+
+[functions.notifications]
+verify_jwt = true
+import_map = "./functions/notifications/deno.json"
+
+[functions.transcribe]
+verify_jwt = true
+import_map = "./functions/transcribe/deno.json"
+
 # Plantilla personalizada del correo de confirmación de cuenta (confirm signup).
 # Despliegue: npx supabase --workdir backend link --project-ref lbofnnfihrdubcqdplcm
 #             npx supabase --workdir backend config push
 [auth.email.template.confirmation]
 subject = "SECURE_OS · Confirma tu cuenta"
-content_path = "../database/supabase_email_confirmacion.html"
+content_path = "database/supabase_email_confirmacion.html"

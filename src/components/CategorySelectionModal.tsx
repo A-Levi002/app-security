@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Car, Flame, HeartPulse, ShieldAlert, UserX, Swords, Paintbrush, HelpCircle, X } from 'lucide-react-native';
+import { Car, Flame, HeartPulse, ShieldAlert, UserX, Swords, Paintbrush, Leaf, HelpCircle, X } from 'lucide-react-native';
 import { EmergencyCategory } from '../types';
 import { DotPatternLayer } from './DotPatternLayer';
 
@@ -35,6 +35,7 @@ export const CategorySelectionModal: React.FC<CategorySelectionModalProps> = ({
     { id: 'suspicious_person', title: 'Persona Sospechosa', subtitle: 'Merodeo, acecho o conducta anómala', icon: UserX },
     { id: 'violence', title: 'Violencia / Agresión', subtitle: 'Conflicto físico o agresión en curso', icon: Swords },
     { id: 'vandalism', title: 'Vandalismo', subtitle: 'Daños a propiedad o vía pública', icon: Paintbrush },
+    { id: 'ambiental', title: 'Ambiental', subtitle: 'Materiales peligrosos, residuos o contaminación (ODS 12)', icon: Leaf },
     { id: 'other', title: 'Otro Incidente', subtitle: 'Situación imprevista de seguridad', icon: HelpCircle },
   ];
 

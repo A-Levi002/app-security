@@ -26,6 +26,7 @@ import {
   UserX,
   Swords,
   Paintbrush,
+  Leaf,
   CheckCircle,
   Mic,
   Image as ImageIcon,
@@ -57,6 +58,9 @@ interface HistoryScreenProps {
 
 type FilterCategory = 'all' | 'in_progress' | 'resolved' | 'closed';
 
+// ODS 12 — filtro de incidentes ambientales (por defecto se muestran todos).
+type EnvironmentalFilter = 'all' | 'ambiental';
+
 const CATEGORY_ICONS: Record<EmergencyCategory, any> = {
   traffic: Car,
   fire: Flame,
@@ -65,6 +69,7 @@ const CATEGORY_ICONS: Record<EmergencyCategory, any> = {
   suspicious_person: UserX,
   violence: Swords,
   vandalism: Paintbrush,
+  ambiental: Leaf,
   other: HelpCircle,
 };
 
@@ -198,14 +203,19 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
   const isLight = theme === 'light';
   const [selectedDetailReport, setSelectedDetailReport] = useState<IncidentReport | null>(null);
   const [filterStatus, setFilterStatus] = useState<FilterCategory>('all');
+  const [filterAmbiental, setFilterAmbiental] = useState<EnvironmentalFilter>('all');
 
   const sortedAndFilteredReports = useMemo(() => {
     let result = [...reports];
     if (filterStatus !== 'all') {
       result = result.filter((rep) => rep.status === filterStatus);
     }
+    // ODS 12 — chip "Ambientales": muestra solo ambientales o todos.
+    if (filterAmbiental !== 'all') {
+      result = result.filter((rep) => (rep as { subtipoAmbiental?: unknown }).subtipoAmbiental != null || rep.category === 'ambiental');
+    }
     return result;
-  }, [reports, filterStatus]);
+  }, [reports, filterStatus, filterAmbiental]);
 
   const getCategoryIcon = (category: EmergencyCategory) => CATEGORY_ICONS[category] || HelpCircle;
 
@@ -299,6 +309,26 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
               </TouchableOpacity>
             );
           })}
+          {/* ODS 12 — chip "Ambientales": muestra/oculta los incidentes ambientales */}
+          {(() => {
+            const envCount = reports.filter((r) => (r as { subtipoAmbiental?: unknown }).subtipoAmbiental != null || r.category === 'ambiental').length;
+            const active = filterAmbiental === 'ambiental';
+            return (
+              <TouchableOpacity
+                onPress={() => setFilterAmbiental(active ? 'all' : 'ambiental')}
+                style={[
+                  styles.chip,
+                  { borderColor: active ? '#22c55e' : cardBorder },
+                  active && { backgroundColor: 'rgba(34,197,94,0.15)' },
+                ]}
+              >
+                <Leaf size={11} color={active ? '#22c55e' : textMuted} />
+                <Text style={[styles.chipText, { color: active ? '#22c55e' : textMuted }]}>
+                  {`Ambientales (${envCount})`}
+                </Text>
+              </TouchableOpacity>
+            );
+          })()}
         </ScrollView>
       </View>
 

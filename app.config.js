@@ -1,14 +1,16 @@
 // Config dinámica de Expo (reemplaza a app.json).
-// 1) La API key de Google Maps se inyecta desde el entorno de build
-//    (EXPO_PUBLIC_GOOGLE_MAPS_API_KEY, disponible en EAS) para que el plugin de
-//    react-native-maps la escriba en el AndroidManifest. Sin key real, el mapa
-//    PROVIDER_GOOGLE se renderiza en negro en el APK.
-// 2) allowBackup: false -> al desinstalar la app, Android NO restaura los datos
+// 1) Los mapas usan MapLibre React Native (tiles OSM/Carto/Esri gratuitos, sin
+//    API key de Google). El plugin @maplibre/maplibre-react-native solo aplica
+//    en iOS; en Android sirve customizaciones. Los tiles se definen en
+//    src/components/IncidentMap.tsx (LAYER_STYLES).
+// 2) La API key de MyMappi (geocoding/autocomplete/directions) es OPCIONAL y se
+//    lee en runtime desde EXPO_PUBLIC_MYMAPPI_API_KEY (ver src/lib/locationApi.ts).
+//    Sin key, la app usa fotón (geocoding) y OSRM público (rutas) gratis.
+// 3) allowBackup: false -> al desinstalar la app, Android NO restaura los datos
 //    (AsyncStorage) desde Google Drive. Así, en cada instalación limpia la app
 //    vuelve a mostrar el tour inicial y el panel de permisos.
-// 3) POST_NOTIFICATIONS: necesario en Android 13+ para poder solicitar el
+// 4) POST_NOTIFICATIONS: necesario en Android 13+ para poder solicitar el
 //    permiso de notificaciones (sin esto, el switch queda denegado para siempre).
-const mapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
 module.exports = {
   expo: {
@@ -74,12 +76,7 @@ module.exports = {
       'expo-camera',
       'expo-location',
       'expo-image-picker',
-      [
-        'react-native-maps',
-        {
-          ...(mapsApiKey ? { androidGoogleMapsApiKey: mapsApiKey } : {}),
-        },
-      ],
+      '@maplibre/maplibre-react-native',
       'expo-font',
       'expo-video',
       'expo-audio',
@@ -90,7 +87,7 @@ module.exports = {
     },
     extra: {
       eas: {
-        projectId: '6a9e6519-7fff-4cce-8efd-6c1e433a6ca9',
+        projectId: '2f2570d5-5229-412e-8e6f-0d969f61acff',
       },
     },
   },
