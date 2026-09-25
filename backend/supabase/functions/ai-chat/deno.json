@@ -1,0 +1,9 @@
+{
+  "imports": {
+    "@langchain/core": "npm:@langchain/core@1.2.11",
+    "@langchain/core/messages": "npm:@langchain/core@1.2.11/messages",
+    "@langchain/google-genai": "npm:@langchain/google-genai@2.3.2",
+    "supabase-js": "jsr:@supabase/supabase-js@2",
+    "zod": "npm:zod@^3.23.8"
+  }
+}

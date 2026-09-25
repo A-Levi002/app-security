@@ -50,7 +50,7 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
             >
               {isActive && (
                 <Animated.View
-                  layout={Layout.springify().stiffness(450).damping(35)}
+                  layout={Layout.springify().damping(26)}
                   style={[
                     { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
                     styles.indicator,

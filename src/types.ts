@@ -20,6 +20,13 @@ export type EnvironmentalSubtype =
   | 'botadero_ilegal'
   | 'contaminacion_agua_suelo';
 
+// Servicio de emergencia que debe responder según el análisis (reporte ambiental).
+export type EmergencyResponseType =
+  | 'policia'
+  | 'ambulancia'
+  | 'bomberos'
+  | 'autoridad_ambiental';
+
 export type IncidentStatus = 'in_progress' | 'resolved' | 'closed';
 
 export type DispatchStep =
@@ -83,6 +90,12 @@ export interface IncidentReport {
   aiVoiceMessage?: string;
   /** ODS 12: presente solo cuando category === 'ambiental' */
   subtipoAmbiental?: EnvironmentalSubtype;
+  /** Producto/sustancia química identificada por la IA en la evidencia ambiental */
+  sustanciaDetectada?: string;
+  /** Fábrica/planta industrial más cercana al punto donde se encontró el químico */
+  fabricaCercana?: string;
+  /** Servicio de emergencia que debe responder (policía/ambulancia/bomberos/autoridad ambiental) */
+  tipoRespuesta?: EmergencyResponseType;
   chat?: ChatMessage[];
 }
 

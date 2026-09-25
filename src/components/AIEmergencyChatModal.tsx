@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -22,13 +22,13 @@ import {
 } from 'expo-audio';
 import * as Speech from 'expo-speech';
 import * as ImagePicker from 'expo-image-picker';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Shield,
   ShieldAlert,
   Mic,
-  MicOff,
   Phone,
   CheckCircle2,
   Clock,
@@ -41,7 +41,6 @@ import {
   Volume2,
   VolumeX,
   Camera,
-  Upload,
   AlertTriangle,
   Video,
   X,
@@ -66,13 +65,17 @@ import { IncidentMap } from './IncidentMap';
 import { DotPatternLayer } from './DotPatternLayer';
 import { PlaceSearchModal } from './PlaceSearchModal';
 import {
-  analyzeIncidentWithAI,
+  aiChat,
   transcribeAudioWithAI,
-  AIAnalysisResult,
-  aiRespond,
+  AIUnavailableError,
+  AIChatMedia,
+  AIChatResult,
+  AIChatHistorialItem,
 } from '../lib/ai';
 import { reverseGeocode } from '../lib/locationApi';
 import { PREVENCION_AMBIENTAL } from '../constants/prevencionAmbiental';
+import { useNearbyFactories } from '../hooks/useNearbyFactories';
+import { formatDistanceKm } from '../constants/industrialCatalog';
 
 // ---------------------------------------------------------------------------
 // AIEmergencyChatModal (React Native)
@@ -150,7 +153,16 @@ const ENVIRONMENTAL_SUBTYPE_OPTIONS: { value: EnvironmentalSubtype; label: strin
   { value: 'contaminacion_agua_suelo', label: 'Contaminación de agua o suelo' },
 ];
 
-type ProtocolStep = 'audio_gravity' | 'photo_evidence' | 'location_dispatch' | 'completed';
+// Número de emergencia por defecto (Bolivia 911; los contactos de confianza y
+// el despacho de unidades usan sus propios teléfonos).
+const EMERGENCY_NUMBER = '911';
+
+// Fase E — chips dinámicos de ayuda según el análisis (policía/ambulancia/etc.).
+const TIPO_RESPUESTA_CALL: Record<string, { label: string; color: string }> = {
+  policia: { label: 'LLAMAR A POLICÍA', color: '#2563eb' },
+  ambulancia: { label: 'LLAMAR A AMBULANCIA', color: '#10b981' },
+  bomberos: { label: 'LLAMAR A BOMBEROS', color: '#dc2626' },
+};
 
 const nowTime = () => {
   const d = new Date();
@@ -158,6 +170,9 @@ const nowTime = () => {
 };
 let idSeq = 0;
 const uid = (): string => `id-${Date.now()}-${idSeq++}`;
+
+// Parámetros de un turno de triaje (texto o evidencia) re-ejecutables en Retry.
+type TurnArgs = { mensajeActual: string; media?: AIChatMedia };
 
 const audioMimeForUri = (uri: string): string => {
   const lower = uri.toLowerCase();
@@ -195,6 +210,7 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
   const insets = useSafeAreaInsets();
   const isLight = theme === 'light';
   const categoryInfo = CATEGORY_DETAILS[category] || CATEGORY_DETAILS.traffic;
+  const isAmbiental = category === 'ambiental';
   const fg = isLight ? '#000' : '#fff';
   const muted = '#8e9192';
 
@@ -209,13 +225,15 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
       categoryLabel: categoryInfo.label,
       title: `${categoryInfo.label} en curso`,
       description: 'Reporte táctico transmitido a través de voz y telemetría IA.',
-      severity: 'high' as IncidentSeverity,
+      severity: 'medium' as IncidentSeverity,
       status: 'in_progress',
-      dispatchStep: 'classified',
+      // Sin escalada prefijada: solo el triaje de la IA (emergencia + confianza
+      // suficiente) fija unidad/severidad. Hasta entonces queda "recibido".
+      dispatchStep: 'received',
       date: dateStr,
       time: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
-      unitAssigned: categoryInfo.unit,
-      originDepot: categoryInfo.depot,
+      unitAssigned: '',
+      originDepot: '',
       etaMinutes: 0,
       etaSeconds: 0,
       location: 'Obteniendo ubicación...',
@@ -261,10 +279,6 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
     };
   }, [existingReport]);
 
-  const [protocolStep, setProtocolStep] = useState<ProtocolStep>(() =>
-    existingReport ? 'completed' : 'audio_gravity'
-  );
-
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
     if (existingReport) {
       const history = existingReport.chat;
@@ -275,8 +289,14 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
       ];
     }
     return [
-      { id: 'ai-step-1', sender: 'ai', text: `Hola, soy SECURE_OS CORE. Protocolo de emergencia iniciado para ${categoryInfo.label}.`, timestamp: 'Ahora' },
-      { id: 'ai-step-2', sender: 'ai', text: 'Por favor, graba un audio de voz indicando la gravedad del incidente, personas afectadas y la situación actual.', timestamp: 'Ahora' },
+      {
+        id: `ai-init-${uid()}`,
+        sender: 'ai' as const,
+        text: isAmbiental
+          ? `Hola, soy SECURE_OS CORE. Cuéntame qué incidente ambiental estás viendo o adjunta una FOTO del lugar, envase o humo; la IA identifica la sustancia y el riesgo. Solo se movilizan unidades si confirmo un riesgo real.`
+          : `Hola, soy SECURE_OS CORE. Cuéntame qué emergencia estás viendo: escribe, graba un audio describiendo la situación o adjunta foto/video de la evidencia. Solo se despachan unidades si confirmo un riesgo real.`,
+        timestamp: 'Ahora',
+      },
     ];
   });
 
@@ -303,8 +323,10 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
   useEffect(() => () => { clearRecordingLimit(); }, []);
 
   const [aiVoiceEnabled, setAIVoiceEnabled] = useState(false);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isResponding, setIsResponding] = useState(false);
+  // Error del último turno de IA: burbuja visible con "Reintentar" + llamada.
+  const [aiError, setAiError] = useState<string | null>(null);
+  const retryRef = useRef<{ payload: TurnArgs; base: ChatMessage[] } | null>(null);
   const [chatInput, setChatInput] = useState('');
   const [isDictating, setIsDictating] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -338,7 +360,7 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
   // Auto scroll to bottom
   useEffect(() => {
     chatBottomRef.current?.scrollToEnd({ animated: true });
-  }, [messages, isRecording, protocolStep]);
+  }, [messages, isRecording]);
 
   // ETA basado en reloj real: el cómputo vive dentro de TrackingCard (tick local)
   // y usa etaTotalSeconds+etaStartedAt desde el momento de la asignación, de modo
@@ -358,7 +380,7 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
   // ODS 12 — tarjeta de prevención: estado derivado en render (sin effects).
   // Se muestra cuando ya hay reporte guardado y no ha sido cerrada para el
   // subtipo actual; no aparece si la IA canceló el reporte.
-  const alreadySaved = messages.length > 2 || protocolStep === 'completed' || !!existingReport;
+  const alreadySaved = messages.length > 1 || !!existingReport;
   const showPrevencionCard =
     category === 'ambiental' &&
     !!subtipoAmbiental &&
@@ -366,7 +388,7 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
     alreadySaved &&
     subtipoAmbiental !== prevencionDismissedFor;
 
-  const aiSeverityToIncident = (s: AIAnalysisResult['severidad']): IncidentSeverity => {
+  const triageToSeverity = (s?: AIChatResult['severidad']): IncidentSeverity => {
     switch (s) {
       case 'critica':
         return 'critical';
@@ -379,30 +401,194 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
     }
   };
 
-  // Aplica la decisión de la IA (proceed/correct/cancel) sobre el incidente y el chat.
-  // Devuelve el IncidentReport actualizado (o null si la cancelación resolvió el incidente en curso).
-  // ETA persistente: cuando la IA asigna recursos fija etaTotalSeconds/etaStartedAt
-  // (reloj real) para que el conteo siga al salir del chat.
-  const etaPatch = (analysis: AIAnalysisResult): Partial<IncidentReport> => {
-    const eta = analysis.eta_minutos ?? incident.etaMinutes;
-    if (eta > 0) {
-      return {
-        etaMinutes: eta,
-        etaSeconds: 0,
-        etaTotalSeconds: eta * 60,
-        etaStartedAt: Date.now(),
-      };
+  // Historial SOLO textual (sin base64) para el triaje: medios como tipo + texto.
+  const toHistorial = (base: ChatMessage[]): AIChatHistorialItem[] =>
+    base.slice(-10).map((m) => {
+      const sender = m.sender === 'ai' ? 'asistente' : 'ciudadano';
+      if (m.type === 'photo') return { sender, kind: 'photo', transcript: m.text };
+      if (m.type === 'video') return { sender, kind: 'video', transcript: m.text };
+      if (m.type === 'audio') {
+        return { sender, kind: 'audio', transcript: m.audioTranscript || m.text };
+      }
+      if (m.type === 'live_tracking_card') {
+        return { sender: 'ciudadano', kind: 'live_tracking_card' };
+      }
+      return { sender, kind: 'text', text: m.text };
+    });
+
+  const ensureTrackingCard = (nextChat: ChatMessage[]): ChatMessage[] => {
+    if (nextChat.some((m) => m.type === 'live_tracking_card')) return nextChat;
+    return [...nextChat, { id: 'tracking-card', sender: 'system', text: 'Seguimiento satelital y telemetría de rescate', timestamp: 'En Vivo', type: 'live_tracking_card' }];
+  };
+
+  const resolveIncidentPatch = (): Partial<IncidentReport> => ({
+    status: 'resolved',
+    dispatchStep: 'resolved',
+    etaMinutes: 0,
+    etaSeconds: 0,
+    etaTotalSeconds: 0,
+    etaStartedAt: undefined,
+  });
+
+  // Aplica la decisión del triaje por turno (sin_riesgo | dudoso | emergencia).
+  // NUNCA inventa despacho: solo se movilizan unidades si la IA emite
+  // "emergencia" con confianza suficiente y un recurso concreto.
+  const applyTriageOutcome = (base: ChatMessage[], triage: AIChatResult) => {
+    const severity = triageToSeverity(triage.severidad ?? undefined);
+    // ODS 12: subtipo viaja en el expediente — elección del usuario > IA > ya guardado.
+    const subtipoResuelto: EnvironmentalSubtype | undefined =
+      subtipoAmbiental ?? triage.subtipoAmbiental ?? incident.subtipoAmbiental;
+    const subtipoPatch: Partial<IncidentReport> =
+      category === 'ambiental' && subtipoResuelto ? { subtipoAmbiental: subtipoResuelto } : {};
+    if (category === 'ambiental' && subtipoResuelto && !subtipoAmbiental) {
+      setSubtipoAmbiental(subtipoResuelto);
     }
-    return {};
+    // Fase E — sustancia identificada y servicio recomendado.
+    const aiEvidencePatch: Partial<IncidentReport> = {
+      ...(triage.sustancia_detectada ? { sustanciaDetectada: triage.sustancia_detectada } : {}),
+      ...(triage.tipo_respuesta ? { tipoRespuesta: triage.tipo_respuesta } : {}),
+    };
+
+    const withFinalize = (
+      patch: Partial<IncidentReport>,
+      chat: ChatMessage[]
+    ): { patch: Partial<IncidentReport>; chat: ChatMessage[] } => {
+      if (!triage.finalizar) return { patch, chat };
+      return {
+        patch: { ...patch, ...resolveIncidentPatch() },
+        chat: [...chat, { id: `sys-done-${uid()}`, sender: 'system', text: 'Incidente finalizado.', timestamp: nowTime() }],
+      };
+    };
+
+    // sin_riesgo: no hay emergencia real → sin despacho. Si además la IA marca
+    // guardar_reporte=false (broma/prueba) el incidente se cierra sin registro.
+    if (triage.decision === 'sin_riesgo') {
+      const sysNo: ChatMessage = { id: `sys-norisk-${uid()}`, sender: 'system', text: 'No se generó un despacho.', timestamp: nowTime() };
+      const aiMsg: ChatMessage = { id: `ai-norisk-${uid()}`, sender: 'ai', text: triage.respuesta, timestamp: nowTime() };
+      const patch: Partial<IncidentReport> = {
+        ...subtipoPatch,
+        ...aiEvidencePatch,
+        severity,
+        dispatchStep: 'received',
+        status: 'in_progress',
+      };
+      if (!triage.guardar_reporte) {
+        Object.assign(patch, resolveIncidentPatch(), { unitAssigned: '', originDepot: '' });
+      }
+      const nextChat = [...base, sysNo, aiMsg];
+      appendAndSave(nextChat, patch);
+      if (aiVoiceEnabled) speakAI('No se generó un despacho. Sin una emergencia confirmada no se movilizan unidades.');
+      return;
+    }
+
+    // dudoso, o emergencia con confianza baja: responder pidiendo confirmar con
+    // más evidencia; NO se despacha nada.
+    if (triage.decision === 'dudoso' || (triage.decision === 'emergencia' && triage.confianza < 0.6)) {
+      const aiMsg: ChatMessage = { id: `ai-confirm-${uid()}`, sender: 'ai', text: triage.respuesta, timestamp: nowTime() };
+      const patch: Partial<IncidentReport> = {
+        ...subtipoPatch,
+        ...aiEvidencePatch,
+        severity,
+        dispatchStep: 'received',
+        status: 'in_progress',
+      };
+      const { patch: fPatch, chat: fChat } = withFinalize(patch, [...base, aiMsg]);
+      appendAndSave(fChat, fPatch);
+      if (aiVoiceEnabled && triage.respuesta) speakAI(triage.respuesta);
+      return;
+    }
+
+    // emergencia confirmada (confianza >= 0.6).
+    const trackingBase = ensureTrackingCard(base);
+    const correctedKey = triage.categoria_corregida && triage.categoria_corregida !== incident.category
+      && CATEGORY_DETAILS[triage.categoria_corregida] ? triage.categoria_corregida : null;
+    const corrected = correctedKey ? CATEGORY_DETAILS[correctedKey] : null;
+    const unidad = triage.unidad_recomendada || (corrected ? corrected.unit : '');
+    // Sin un recurso concreto la IA no habilitó despacho real → dudoso.
+    if (!unidad) {
+      const aiMsg: ChatMessage = { id: `ai-sinunidad-${uid()}`, sender: 'ai', text: triage.respuesta, timestamp: nowTime() };
+      const patch: Partial<IncidentReport> = {
+        ...subtipoPatch,
+        ...aiEvidencePatch,
+        severity,
+        dispatchStep: 'received',
+        status: 'in_progress',
+      };
+      const { patch: fPatch, chat: fChat } = withFinalize(patch, [...trackingBase, aiMsg]);
+      appendAndSave(fChat, fPatch);
+      if (aiVoiceEnabled && triage.respuesta) speakAI(triage.respuesta);
+      return;
+    }
+    const baseOrigen = triage.base_origen || (corrected ? corrected.depot : '');
+    const eta = triage.eta_minutos ?? 0;
+    const textExtra = corrected
+      ? `\n\nSe reclasificó el incidente a ${corrected.label} (antes ${incident.categoryLabel}).`
+      : '';
+    const aiMsg: ChatMessage = { id: `ai-escala-${uid()}`, sender: 'ai', text: `${triage.respuesta}${textExtra}`, timestamp: nowTime() };
+    const patch: Partial<IncidentReport> = {
+      ...subtipoPatch,
+      ...aiEvidencePatch,
+      severity,
+      status: 'in_progress',
+      dispatchStep: 'en_route',
+      unitAssigned: unidad,
+      originDepot: baseOrigen,
+      ...(eta > 0 ? { etaMinutes: eta, etaSeconds: 0, etaTotalSeconds: eta * 60, etaStartedAt: Date.now() } : {}),
+      ...(correctedKey
+        ? { category: correctedKey, categoryLabel: corrected!.label, title: `${corrected!.label} en curso` }
+        : {}),
+    };
+    const { patch: fPatch, chat: fChat } = withFinalize(patch, [...trackingBase, aiMsg]);
+    appendAndSave(fChat, fPatch);
+    if (aiVoiceEnabled) speakAI(`Despacho confirmado. ${unidad} en camino a tu ubicación.`);
   };
 
-  // Voz IA
-  const speakAI = (text?: string) => {
-    const toSpeak = text || incident.aiVoiceMessage || 'Unidad de respuesta táctica en camino. Mantenga la calma y permanezca a resguardo.';
-    Speech.speak(toSpeak, { language: 'es-ES', rate: 0.95, onDone: () => { Speech.stop(); }, onStopped: () => { Speech.stop(); }, onError: () => { Speech.stop(); } });
+  // Turno completo de triaje: una sola llamada a ai-chat con el historial en
+  // texto y (opcionalmente) la evidencia media del turno actual. En error se
+  // guarda el payload para "Reintentar" (burbuja de error real, sin fallbacks).
+  const performTurn = async (base: ChatMessage[], payload: TurnArgs) => {
+    setIsResponding(true);
+    setAiError(null);
+    try {
+      const triage = await aiChat({
+        categoria: incident.category,
+        categoriaLabel: incident.categoryLabel,
+        historial: toHistorial(base),
+        mensajeActual: payload.mensajeActual,
+        subtipoAmbiental:
+          category === 'ambiental' ? subtipoAmbiental ?? incident.subtipoAmbiental : undefined,
+        unidadAsignada: incident.unitAssigned,
+        dispatchStep: incident.dispatchStep,
+        media: payload.media,
+      });
+      retryRef.current = null;
+      applyTriageOutcome(base, triage);
+    } catch (e) {
+      const msg =
+        e instanceof AIUnavailableError
+          ? e.message
+          : 'No se pudo conectar con la IA. Revisa tu conexión.';
+      retryRef.current = { payload, base };
+      setAiError(msg);
+    } finally {
+      setIsResponding(false);
+    }
   };
 
-  // Interruptor para activar/desactivar la lectura por voz automática de cada respuesta de la IA.
+  const retryTurn = () => {
+    const r = retryRef.current;
+    if (!r || isResponding) return;
+    performTurn(r.base, r.payload);
+  };
+
+  // Voz IA: reproduce SOLO el texto real del triaje o del despacho. Nunca debe
+  // haber frases estáticas haciéndose pasar por despacho de unidades.
+  const speakAI = (text: string) => {
+    if (!text) return;
+    Speech.speak(text, { language: 'es-ES', rate: 0.95, onDone: () => { Speech.stop(); }, onStopped: () => { Speech.stop(); }, onError: () => { Speech.stop(); } });
+  };
+
+  // Interruptor para activar/desactivar la lectura por voz automática.
   const toggleAIVoice = () => {
     if (aiVoiceEnabled) {
       setAIVoiceEnabled(false);
@@ -410,91 +596,6 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
     } else {
       setAIVoiceEnabled(true);
     }
-  };
-
-  const applyAIOutcome = (baseMessages: ChatMessage[], analysis: AIAnalysisResult): IncidentReport | null => {
-    const severity = aiSeverityToIncident(analysis.severidad);
-    // ODS 12: el subtipo viaja en el expediente — prioridad: elección del
-    // usuario > detección de la IA > ya guardado en el reporte.
-    const subtipoResuelto: EnvironmentalSubtype | undefined =
-      subtipoAmbiental ?? analysis.subtipoAmbiental ?? incident.subtipoAmbiental;
-    const subtipoPatch: Partial<IncidentReport> =
-      category === 'ambiental' && subtipoResuelto ? { subtipoAmbiental: subtipoResuelto } : {};
-    if (category === 'ambiental' && subtipoResuelto && !subtipoAmbiental) {
-      setSubtipoAmbiental(subtipoResuelto);
-    }
-
-    if (analysis.decision === 'cancel') {
-      // Falsa emergencia / broma: se cancela el reporte y se informa al ciudadano.
-      const cancelSystem: ChatMessage = { id: `cancel-sys-${uid()}`, sender: 'system', text: 'Reporte finalizado tras verificación.', timestamp: nowTime() };
-      const cancelAi: ChatMessage = {
-        id: `ai-cancel-${uid()}`,
-        sender: 'ai',
-        text: analysis.motivo
-          ? `No se confirmó una emergencia real. ${analysis.motivo} RECUERDA: SECURE_OS es exclusivamente para emergencias reales; no hay modo de juego ni de prueba. Cuando de verdad exista un riesgo (fuego, agresión, accidente, robo), vuelve a reportarlo por voz o cámara.`
-          : 'La evidencia no permitió confirmar una emergencia real, por lo que se cancela el despacho. RECUERDA: SECURE_OS es exclusivamente para emergencias reales; no hay modo de juego ni de prueba. Reporta solo cuando exista un riesgo actual.',
-        timestamp: nowTime(),
-      };
-      const saved = appendAndSave([...baseMessages, cancelSystem, cancelAi], {
-        ...subtipoPatch,
-        ...(incident.aiVoiceMessage
-            ? { aiVoiceMessage: 'No se confirmó una emergencia real. El despacho fue cancelado.' }
-            : {}),
-        severity,
-        status: 'resolved',
-        dispatchStep: 'resolved',
-        etaMinutes: 0,
-        etaSeconds: 0,
-        etaTotalSeconds: 0,
-        etaStartedAt: undefined,
-      });
-      if (aiVoiceEnabled) speakAI('No se confirmó una emergencia real. El despacho fue cancelado.');
-      return saved;
-    }
-
-    if (analysis.decision === 'correct' && analysis.categoria_corregida && CATEGORY_DETAILS[analysis.categoria_corregida]) {
-      const corrected = CATEGORY_DETAILS[analysis.categoria_corregida];
-      const beforeLabel = incident.categoryLabel;
-      const correctMsg: ChatMessage = {
-        id: `ai-correct-${uid()}`,
-        sender: 'ai',
-        text: analysis.motivo
-          ? `Se reclasificó la emergencia a ${corrected.label} (antes ${beforeLabel}). ${analysis.motivo}`
-          : `La evidencia indica una ${corrected.label}. Despacho reasignado.`,
-        timestamp: nowTime(),
-      };
-      const saved = appendAndSave([...baseMessages, correctMsg], {
-        ...subtipoPatch,
-        aiVoiceMessage: analysis.mensaje_voz,
-        severity,
-        category: analysis.categoria_corregida,
-        categoryLabel: corrected.label,
-        title: `${corrected.label} en curso`,
-        unitAssigned: corrected.unit,
-        originDepot: corrected.depot,
-        dispatchStep: 'en_route',
-        ...etaPatch(analysis),
-      });
-      if (aiVoiceEnabled) speakAI(analysis.mensaje_voz);
-      return saved;
-    }
-
-    // proceed (o unknown): respuesta estándar de confirmación.
-    const aiConfirm: ChatMessage = {
-      id: `ai-confirm-${uid()}`,
-      sender: 'ai',
-      text: analysis.respuesta_asistente,
-      timestamp: nowTime(),
-    };
-    const saved = appendAndSave([...baseMessages, aiConfirm], {
-      ...subtipoPatch,
-      aiVoiceMessage: analysis.mensaje_voz,
-      severity,
-      dispatchStep: 'en_route',
-      ...etaPatch(analysis),
-    });
-    if (aiVoiceEnabled) speakAI(analysis.mensaje_voz);
-    return saved;
   };
 
   const dispatchPhotoMessage = async (photoUrl: string) => {
@@ -506,72 +607,57 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
       type: 'photo',
       photoUrl,
     };
-    const trackingCardMsg: ChatMessage = { id: 'tracking-card', sender: 'system', text: 'Seguimiento satelital y telemetría de rescate', timestamp: 'En Vivo', type: 'live_tracking_card' };
-    const hasTrackingCard = messages.some((m) => m.type === 'live_tracking_card');
-    const withPhoto = [...messages, photoMsg];
-    if (!hasTrackingCard) withPhoto.push(trackingCardMsg);
-    appendAndSave(withPhoto, { imageUrl: photoUrl, dispatchStep: 'en_route' });
-    setProtocolStep('completed');
+    const withPhoto = ensureTrackingCard([...messages, photoMsg]);
+    appendAndSave(withPhoto, { imageUrl: photoUrl });
 
-    // Leer foto como base64 para enviar a Gemini
+    // Foto redimensionada <=1024px (JPEG q0.7) ANTES de leerla a base64: la
+    // lectura en el hilo de UI y el body del triaje deben ser ligeros (ANR).
+    let resizedUri = photoUrl;
+    try {
+      const resized = await manipulateAsync(
+        photoUrl,
+        [{ resize: { width: 1024 } }],
+        { compress: 0.7, format: SaveFormat.JPEG }
+      );
+      if (resized?.uri) resizedUri = resized.uri;
+    } catch {}
+
     let fotoBase64: string | undefined;
     try {
       const FileSystem = await import('expo-file-system/legacy');
-      const fileInfo = await FileSystem.getInfoAsync(photoUrl);
+      const fileInfo = await FileSystem.getInfoAsync(resizedUri);
       if (fileInfo.exists) {
-        fotoBase64 = await FileSystem.readAsStringAsync(photoUrl, { encoding: FileSystem.EncodingType.Base64 });
+        fotoBase64 = await FileSystem.readAsStringAsync(resizedUri, { encoding: FileSystem.EncodingType.Base64 });
       }
-    } catch {
-      // Si falla la lectura, enviamos sin foto
-    }
+    } catch {}
 
-    setIsAnalyzing(true);
-    const analysis = await analyzeIncidentWithAI({
-      incidentId: incident.id,
-      categoria: category,
-      descripcion: 'Evidencia fotográfica capturada en la escena.',
-      subtipoAmbiental: category === 'ambiental' ? subtipoAmbiental ?? undefined : undefined,
-      fotoBase64,
-      mediaMimeType: 'image/jpeg',
+    // Auto-análisis inmediato de la foto (una sola llamada, sin botón).
+    await performTurn(withPhoto, {
+      mensajeActual: 'El ciudadano envió una FOTO de la evidencia en la escena.',
+      media: fotoBase64 ? { fotoBase64, mediaMimeType: 'image/jpeg' } : undefined,
     });
-    setIsAnalyzing(false);
-
-    applyAIOutcome(withPhoto, analysis);
   };
 
   const dispatchVideoMessage = async (videoUrl: string) => {
     const videoMsg: ChatMessage = { id: `usr-vid-${uid()}`, sender: 'user', text: 'Evidencia de video grabada en la escena', timestamp: nowTime(), type: 'video', videoUrl };
-    const trackingCardMsg: ChatMessage = { id: 'tracking-card', sender: 'system', text: 'Seguimiento satelital y telemetría de rescate', timestamp: 'En Vivo', type: 'live_tracking_card' };
-    const hasTrackingCard = messages.some((m) => m.type === 'live_tracking_card');
-    const withVideo = [...messages, videoMsg];
-    if (!hasTrackingCard) withVideo.push(trackingCardMsg);
-    appendAndSave(withVideo, { dispatchStep: 'en_route' });
-    setProtocolStep('completed');
+    const withVideo = ensureTrackingCard([...messages, videoMsg]);
+    appendAndSave(withVideo, {});
 
-    // Leer video como base64 para enviar a Gemini
+    // Video BREVE (recordAsync corta la grabación): solo así viaja inline a
+    // Gemini. Si el archivo excede el límite, la evidencia va como texto.
     let videoBase64: string | undefined;
     try {
       const FileSystem = await import('expo-file-system/legacy');
       const fileInfo = await FileSystem.getInfoAsync(videoUrl);
-      if (fileInfo.exists) {
+      if (fileInfo.exists && fileInfo.size && fileInfo.size <= 4 * 1024 * 1024) {
         videoBase64 = await FileSystem.readAsStringAsync(videoUrl, { encoding: FileSystem.EncodingType.Base64 });
       }
-    } catch {
-      // Si falla la lectura, enviamos sin video
-    }
+    } catch {}
 
-    setIsAnalyzing(true);
-    const analysis = await analyzeIncidentWithAI({
-      incidentId: incident.id,
-      categoria: category,
-      descripcion: 'Evidencia de video grabada en la escena.',
-      subtipoAmbiental: category === 'ambiental' ? subtipoAmbiental ?? undefined : undefined,
-      videoBase64,
-      videoMimeType: 'video/mp4',
+    await performTurn(withVideo, {
+      mensajeActual: 'El ciudadano envió un VIDEO breve de la evidencia en la escena.',
+      media: videoBase64 ? { videoBase64, videoMimeType: 'video/mp4' } : undefined,
     });
-    setIsAnalyzing(false);
-
-    applyAIOutcome(withVideo, analysis);
   };
 
   // Grabación de audio REAL con expo-audio
@@ -622,39 +708,15 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
       }
 
       const userAudioMsg: ChatMessage = { id: `usr-aud-${uid()}`, sender: 'user', text: 'Nota de voz de emergencia (Gravedad evaluada)', timestamp: nowTime(), type: 'audio', audioDuration: audioDurationStr, audioUrl: uri, audioTranscript: transcript || undefined };
-      appendAndSave([...messages, userAudioMsg], { audioNote: uri });
-      setProtocolStep('photo_evidence');
-
-      setIsAnalyzing(true);
-      const analysis = await analyzeIncidentWithAI({
-        incidentId: incident.id,
-        categoria: category,
-        descripcion: 'Nota de voz grabada por el ciudadano indicando la gravedad del incidente.',
-        subtipoAmbiental: category === 'ambiental' ? subtipoAmbiental ?? undefined : undefined,
-        audioBase64,
-        audioMimeType: mime,
-        audioTranscript: transcript || undefined,
-      });
-      setIsAnalyzing(false);
-
       const base = [...messages, userAudioMsg];
-      const saved = applyAIOutcome(base, analysis);
-      if (analysis.decision === 'cancel' || analysis.decision === 'correct') {
-        return;
-      }
-      // En "proceed" añadimos el siguiente paso del protocolo. Se construye
-      // sobre el reporte que SOLO aplicó applyAIOutcome (fuente de verdad).
-      const aiNextStepMsg: ChatMessage = { id: `ai-next-step-${uid()}`, sender: 'ai', text: 'Paso 2: Adjunta una foto o graba un video con tu cámara para verificar la escena y calcular recursos exactos.', timestamp: nowTime() };
-      const nextMessages = [...(saved?.chat ?? [...base]), aiNextStepMsg];
-      const next: IncidentReport = {
-        ...(saved ?? incident),
-        audioNote: uri,
-        dispatchStep: 'resources_assigned',
-        chat: nextMessages,
-      };
-      setMessages(nextMessages);
-      setIncident(next);
-      if (onSaveReport) onSaveReport(next);
+      appendAndSave(base, { audioNote: uri });
+      // El audio viaja SOLO como transcripción (nunca base64): más rápido y
+      // ligero. La IA escucha la transcripción junto con el historial.
+      await performTurn(base, {
+        mensajeActual: transcript
+          ? `Audio del ciudadano (transcrito): ${transcript}`
+          : 'El ciudadano envió un AUDIO de voz describiendo la situación.',
+      });
     } catch {
       setCameraError('No se pudo procesar el audio.');
     }
@@ -664,7 +726,6 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
   // texto al input del chat (Edge Function "transcribe" con Gemini).
   const startVoiceDictation = async () => {
     if (isResolved || isResponding || isRecording) return;
-    if (protocolStep !== 'completed') return;
     setIsDictating(true);
     try {
       const permission = await AudioModule.requestRecordingPermissionsAsync();
@@ -742,14 +803,12 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
     }
   };
 
-  // Voz IA
-
   const handleResolveIncident = () => {
     const resolveMsg: ChatMessage = { id: `system-${uid()}`, sender: 'system', text: 'Incidente finalizado.', timestamp: nowTime() };
     appendAndSave([...messages, resolveMsg], { status: 'resolved', dispatchStep: 'resolved', etaMinutes: 0, etaSeconds: 0, etaTotalSeconds: 0, etaStartedAt: undefined });
   };
 
-  // Conversación libre con la IA (LangChain → Edge Function ai-respond).
+  // Conversación libre con la IA → triaje por turno (Edge Function ai-chat).
   const sendChatMessage = async () => {
     const text = chatInput.trim();
     if (!text || isResponding || isResolved) return;
@@ -759,52 +818,8 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
     const base = [...messages, userMsg];
     appendAndSave(base);
 
-    setIsResponding(true);
-    const historial = [...base]
-      .slice(-12)
-      .filter((m) => m.sender !== 'system' && !m.type)
-      .map((m) => ({ sender: m.sender, text: m.text }));
-    const res = await aiRespond({
-      incidentId: incident.id,
-      categoria: incident.category,
-      categoriaLabel: incident.categoryLabel,
-      unidad: incident.unitAssigned,
-      dispatchStep: incident.dispatchStep,
-      historial,
-      pregunta: text,
-      subtipoAmbiental: incident.category === 'ambiental' ? subtipoAmbiental ?? incident.subtipoAmbiental : undefined,
-    });
-    setIsResponding(false);
-
-    const aiMsg: ChatMessage = {
-      id: `ai-reply-${uid()}`,
-      sender: 'ai',
-      text: res.respuesta || 'Tu emergencia está siendo atendida. Mantén la calma y espera indicaciones.',
-      timestamp: nowTime(),
-    };
-    const sysMsg: ChatMessage | null =
-      res.finalizar
-        ? { id: `system-${uid()}`, sender: 'system', text: 'Incidente finalizado.', timestamp: nowTime() }
-        : res.siguiente_paso === 'resolved'
-          ? { id: `system-${uid()}`, sender: 'system', text: 'Incidente finalizado.', timestamp: nowTime() }
-          : null;
-
-    const finalMessages = sysMsg ? [...base, aiMsg, sysMsg] : [...base, aiMsg];
-    const patch: Partial<IncidentReport> = {
-      chat: finalMessages,
-      ...(res.mensaje_voz ? { aiVoiceMessage: res.mensaje_voz } : {}),
-    };
-    if (res.siguiente_paso && res.siguiente_paso !== 'resolved') patch.dispatchStep = res.siguiente_paso;
-    if (sysMsg) {
-      patch.status = 'resolved';
-      patch.dispatchStep = 'resolved';
-      patch.etaMinutes = 0;
-      patch.etaSeconds = 0;
-      patch.etaTotalSeconds = 0;
-      patch.etaStartedAt = undefined;
-    }
-    if (res.mensaje_voz && aiVoiceEnabled) speakAI(res.mensaje_voz);
-    appendAndSave(finalMessages, patch);
+    // Un solo camino de IA: el triaje responde el texto y decide si hay despacho.
+    await performTurn(base, { mensajeActual: text });
   };
 
   // Cámara en vivo
@@ -844,7 +859,7 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
     setVideoRecordingSeconds(0);
     videoTimerRef.current = setInterval(() => setVideoRecordingSeconds((prev) => prev + 1), 1000);
     try {
-      const video = await cameraRef.current.recordAsync({ maxDuration: 45, maxFileSize: 8 * 1024 * 1024 });
+      const video = await cameraRef.current.recordAsync({ maxDuration: 18, maxFileSize: 4 * 1024 * 1024 });
       setIsRecordingVideo(false);
       if (videoTimerRef.current) {
         clearInterval(videoTimerRef.current);
@@ -931,6 +946,33 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
   };
 
   const cancelExit = () => setShowExitConfirm(false);
+
+  // Selector de subtipo ambiental (no bloquea): se muestra en la fase de audio
+  // (por compatibilidad) y en la fase de foto (flujo ambiental imagen-primero).
+  const renderAmbientSubtypeChips = () => (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingBottom: 10 }}>
+      {ENVIRONMENTAL_SUBTYPE_OPTIONS.map((opt) => {
+        const active = subtipoAmbiental === opt.value;
+        return (
+          <TouchableOpacity
+            key={opt.value}
+            onPress={() => setSubtipoAmbiental(opt.value)}
+            style={[
+              styles.envSubtypeChip,
+              {
+                borderColor: active ? '#22c55e' : isLight ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.15)',
+                backgroundColor: active ? 'rgba(34,197,94,0.15)' : isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.08)',
+              },
+            ]}
+          >
+            <Text style={{ color: active ? '#22c55e' : muted, fontSize: 10, fontWeight: '700', textTransform: 'uppercase' }} numberOfLines={1}>
+              {opt.label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </ScrollView>
+  );
 
   return (
     <View style={[styles.overlay, { backgroundColor: isLight ? '#f7f7f8' : '#0c0c0d' }]}>
@@ -1055,29 +1097,6 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
             </View>
           );
         })}
-        {isAnalyzing && (
-          <View style={[styles.bubbleRow, { alignItems: 'flex-start' }]}>
-            <View style={[styles.bubbleWrap, { alignItems: 'flex-start' }]}>
-              <View style={styles.bubbleInner}>
-                <View style={[styles.aiAvatar, { backgroundColor: isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.1)' }]}>
-                  <Sparkles size={14} color={fg} />
-                </View>
-                <View
-                  style={[
-                    styles.bubble,
-                    isLight ? { backgroundColor: '#fff', borderWidth: 1, borderColor: 'rgba(0,0,0,0.1)' } : { backgroundColor: '#141416', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' },
-                    { maxWidth: '85%', borderBottomLeftRadius: 2 },
-                  ]}
-                >
-                  <View style={styles.analyzingRow}>
-                    <Activity size={14} color="#10b981" />
-                    <Text style={[styles.monoTiny, { color: '#10b981' }]}>Analizando con IA…</Text>
-                  </View>
-                </View>
-              </View>
-            </View>
-          </View>
-        )}
         {isResponding && (
           <View style={[styles.bubbleRow, { alignItems: 'flex-start' }]}>
             <View style={[styles.bubbleWrap, { alignItems: 'flex-start' }]}>
@@ -1101,9 +1120,49 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
             </View>
           </View>
         )}
+        {aiError && (
+          <View style={[styles.bubbleRow, { alignItems: 'flex-start' }]}>
+            <View style={[styles.bubbleWrap, { alignItems: 'flex-start' }]}>
+              <View style={styles.bubbleInner}>
+                <View style={[styles.aiAvatar, { backgroundColor: isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.1)' }]}>
+                  <AlertTriangle size={15} color="#ef4444" />
+                </View>
+                <View
+                  style={[
+                    styles.bubble,
+                    { borderColor: 'rgba(239,68,68,0.5)', borderWidth: 1, maxWidth: '85%', borderBottomLeftRadius: 2 },
+                    isLight ? { backgroundColor: '#fff' } : { backgroundColor: '#141416' },
+                  ]}
+                >
+                  <Text style={[styles.monoTiny, { color: '#ef4444', fontWeight: '700', textTransform: 'uppercase', marginBottom: 4 }]}>Falla de comunicación IA</Text>
+                  <Text style={{ color: fg, fontSize: 13, lineHeight: 19 }}>{aiError}</Text>
+                  <View style={[styles.trackingEtaRow, { marginTop: 10, flexWrap: 'wrap', gap: 8 }]}>
+                    <TouchableOpacity
+                      style={[styles.primaryPill, { backgroundColor: '#ef4444' }]}
+                      onPress={retryTurn}
+                      disabled={isResponding}
+                      accessibilityLabel="Reintentar el análisis con IA"
+                    >
+                      {isResponding ? <Activity size={13} color="#fff" /> : <RotateCw size={13} color="#fff" />}
+                      <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700', textTransform: 'uppercase' }}>Reintentar</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.primaryPill, isLight ? styles.primaryLight : styles.primaryDark]}
+                      onPress={() => onCallContact && onCallContact('911', EMERGENCY_NUMBER)}
+                      accessibilityLabel="Llamar al 911"
+                    >
+                      <Phone size={13} color={isLight ? '#fff' : '#000'} />
+                      <Text style={{ color: isLight ? '#fff' : '#000', fontSize: 11, fontWeight: '700', textTransform: 'uppercase' }}>Llamar 911</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            </View>
+          </View>
+        )}
       </ScrollView>
 
-      {/* Footer: protocol controls */}
+      {/* Footer: chat libre + llamadas discretas + escalada confirmada por triaje */}
       <View style={[styles.footer, { backgroundColor: isLight ? 'rgba(255,255,255,0.9)' : 'rgba(20,20,22,0.9)', borderTopColor: isLight ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.1)', paddingBottom: 16 + insets.bottom }]}>
         {isResolved ? (
           <View style={styles.resolvedFooter}>
@@ -1116,86 +1175,51 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
               <Text style={{ color: isLight ? '#fff' : '#000', fontWeight: '700', fontSize: 12, textTransform: 'uppercase' }}>Salir del Chat</Text>
             </TouchableOpacity>
           </View>
-        ) : protocolStep === 'audio_gravity' ? (
-          <View style={styles.audioPanel}>
-            {/* ODS 12 — selector de subtipo ambiental (no bloquea el flujo) */}
-            {category === 'ambiental' && (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingBottom: 10 }}>
-                {ENVIRONMENTAL_SUBTYPE_OPTIONS.map((opt) => {
-                  const active = subtipoAmbiental === opt.value;
-                  return (
-                    <TouchableOpacity
-                      key={opt.value}
-                      onPress={() => setSubtipoAmbiental(opt.value)}
-                      style={[
-                        styles.envSubtypeChip,
-                        {
-                          borderColor: active ? '#22c55e' : isLight ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.15)',
-                          backgroundColor: active ? 'rgba(34,197,94,0.15)' : isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.08)',
-                        },
-                      ]}
-                    >
-                      <Text style={{ color: active ? '#22c55e' : muted, fontSize: 10, fontWeight: '700', textTransform: 'uppercase' }} numberOfLines={1}>
-                        {opt.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            )}
-            {isRecording ? (
-              <View style={styles.recordingBar}>
-                <View style={styles.trackingEtaRow}>
-                  <View style={styles.recordingDot} />
-                  <Text style={{ color: fg, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' }}>
-                    GRABANDO AUDIO // {Math.floor(recordingMs / 60000)}:{String(Math.floor((recordingMs % 60000) / 1000)).padStart(2, '0')}
-                  </Text>
-                </View>
-                <TouchableOpacity style={[styles.primaryPill, isLight ? styles.primaryLight : styles.primaryDark]} onPress={stopAudioRecording}>
-                  <MicOff size={14} color={isLight ? '#fff' : '#000'} />
-                  <Text style={{ color: isLight ? '#fff' : '#000', fontSize: 11, fontWeight: '700', textTransform: 'uppercase' }}>Enviar Audio</Text>
-                </TouchableOpacity>
+) : (
+          <View style={styles.chatControls}>
+              {/* ODS 12 — selector de subtipo ambiental (no bloquea el flujo) */}
+              {isAmbiental && renderAmbientSubtypeChips()}
+              {/* Llamadas discretas de emergencia — siempre visibles, sin estridencia. */}
+              <View style={styles.callChipsRow}>
+                {[
+                  { label: 'POLICÍA 110', phone: '110', color: '#2563eb' },
+                  { label: 'BOMBEROS 119', phone: '119', color: '#dc2626' },
+                  { label: '911', phone: EMERGENCY_NUMBER, color: '#10b981' },
+                ].map((c) => (
+                  <TouchableOpacity
+                    key={c.phone}
+                    style={[styles.callChip, { backgroundColor: c.color }]}
+                    onPress={() => onCallContact && onCallContact(c.label, c.phone)}
+                    accessibilityLabel={`Llamar ${c.label}`}
+                  >
+                    <Phone size={12} color="#fff" />
+                    <Text style={styles.callChipText}>{c.label}</Text>
+                  </TouchableOpacity>
+                ))}
               </View>
-            ) : (
-              <View style={styles.recStart}>
-                <Text style={[styles.monoTiny, { color: muted, marginBottom: 10 }]}>Presiona para grabar el audio de gravedad del incidente</Text>
-                <TouchableOpacity
-                  style={[styles.recBtn, isLight ? { backgroundColor: '#000' } : { backgroundColor: '#fff' }]}
-                  onPress={startAudioRecording}
-                >
-                  <Mic size={28} color={isLight ? '#fff' : '#000'} />
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-        ) : protocolStep === 'photo_evidence' ? (
-          <View style={styles.photoPanel}>
-            <Text style={[styles.monoTiny, { color: muted, textAlign: 'center', marginBottom: 8 }]}>
-              Captura fotos o graba videos en vivo para respaldar el reporte:
-            </Text>
-            <View style={styles.photoActions}>
-              <TouchableOpacity style={[styles.photoActionBtn, isLight ? styles.primaryLight : styles.primaryDark]} onPress={() => openCamera('picture')}>
-                <Camera size={15} color={isLight ? '#fff' : '#000'} />
-                <Text numberOfLines={1} style={{ color: isLight ? '#fff' : '#000', fontSize: 10, fontWeight: '700', textTransform: 'uppercase', flexShrink: 1 }}>
-                  Cámara Vivo
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.videoActionBtn} onPress={() => openCamera('video')}>
-                <Video size={15} color="#fff" />
-                <Text numberOfLines={1} style={{ color: '#fff', fontSize: 10, fontWeight: '700', textTransform: 'uppercase', flexShrink: 1 }}>
-                  Grabar Video
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.photoActionBtn, styles.ghostAction, { borderColor: isLight ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.2)', backgroundColor: isLight ? '#fff' : 'rgba(255,255,255,0.1)' }]} onPress={handlePickPhoto}>
-                <Upload size={15} color={fg} />
-                <Text numberOfLines={1} style={{ color: fg, fontSize: 10, fontWeight: '700', textTransform: 'uppercase', flexShrink: 1 }}>
-                  Subir Archivo
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        ) : (
-<View style={styles.chatControls}>
+              {/* Fase E — chip del servicio recomendado por el triaje: SOLO si hubo
+                  escalada real (unidad asignada por la IA, confianza >= 0.6). */}
+              {incident.tipoRespuesta && incident.unitAssigned && !isResolved &&
+                TIPO_RESPUESTA_CALL[incident.tipoRespuesta] && (
+                  <View style={styles.respuestaChips}>
+                    <Text style={[styles.monoTiny, { color: muted, textTransform: 'uppercase', letterSpacing: 0.5 }]}>
+                      AYUDA RECOMENDADA POR EL ANÁLISIS
+                    </Text>
+                    {(() => {
+                      const opt = TIPO_RESPUESTA_CALL[incident.tipoRespuesta!];
+                      return (
+                        <TouchableOpacity
+                          style={[styles.respuestaChip, { backgroundColor: opt.color }]}
+                          onPress={() => onCallContact && onCallContact(opt.label.replace('LLAMAR A ', ''), EMERGENCY_NUMBER)}
+                          accessibilityLabel={opt.label}
+                        >
+                          <Phone size={15} color="#fff" />
+                          <Text style={styles.respuestaChipText}>{opt.label}</Text>
+                        </TouchableOpacity>
+                      );
+                    })()}
+                  </View>
+                )}
               {/* Barra lateral de acciones rápidas (al costado, tipo IA) */}
               {showQuickRail && (
                 <View style={[styles.quickRail, { backgroundColor: isLight ? 'rgba(255,255,255,0.95)' : 'rgba(20,20,22,0.96)', borderColor: isLight ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.15)' }]}>
@@ -1222,7 +1246,7 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
                 </View>
               )}
 
-              {/* Conversación libre con la IA (LangChain → ai-respond) */}
+              {/* Entrada de chat libre → triaje por turno (ai-chat) */}
               <View style={styles.chatInputRow}>
                 <TouchableOpacity
                   style={[
@@ -1278,7 +1302,7 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
               <View style={styles.callCenterSlot}>
                 <TouchableOpacity
                   style={[styles.callMainBtn, { backgroundColor: '#059669' }]}
-                  onPress={() => onCallContact && onCallContact(incident.unitAssigned, '+52 55 9110 0021')}
+                  onPress={() => onCallContact && onCallContact(incident.unitAssigned, EMERGENCY_NUMBER)}
                 >
                   <Phone size={18} color="#fff" />
                   <Text style={styles.callMainBtnText}>LLAMAR</Text>
@@ -1387,7 +1411,7 @@ export const AIEmergencyChatModal: React.FC<AIEmergencyChatModalProps> = ({
         <View style={{ flex: 1, backgroundColor: '#000' }}>
           <LiveTrackingScreen
             incident={incident}
-            onContactUnit={(unit) => onCallContact && onCallContact(unit, '+52 55 9110 0021')}
+            onContactUnit={(unit) => onCallContact && onCallContact(unit, EMERGENCY_NUMBER)}
             onResolveIncident={() => {
               handleResolveIncident();
               setShowFullMapModal(false);
@@ -1522,6 +1546,16 @@ const TrackingCard = React.memo(function TrackingCard({
   const hasEta =
     !!incident.etaStartedAt && !!incident.etaTotalSeconds && incident.etaTotalSeconds > 0;
 
+  // Fase D — fábricas/plantas industriales cercanas para los marcadores del mapa.
+  const { factories, nearest } = useNearbyFactories(
+    incident.coordinates && incident.coordinates.lat !== 0 ? incident.coordinates : null,
+    15
+  );
+  const pois = useMemo(
+    () => factories.map((f) => ({ id: f.id, name: f.name, kind: f.kind, lat: f.lat, lng: f.lng })),
+    [factories]
+  );
+
   useEffect(() => {
     if (isResolved || !hasEta) return;
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -1568,20 +1602,41 @@ const TrackingCard = React.memo(function TrackingCard({
         category={incident.category}
         unitAssigned={incident.unitAssigned}
         originDepot={incident.originDepot}
-        showRoute={!isResolved}
+        showRoute={!!incident.unitAssigned && !isResolved}
         height={300}
         interactive
         showControls
         onExpand={onExpand}
+        // Fase D — fábricas/plantas industriales cercanas al punto del reporte.
+        pois={pois}
       />
 
       <View style={styles.trackingFooter}>
+        {/* Fase D — fábrica/planta más cercana + sustancia detectada (ambiental) */}
+        {(nearest || incident.sustanciaDetectada) && (
+          <View style={{ gap: 4 }}>
+            {nearest && (
+              <View style={styles.trackingEtaRow}>
+                <Text style={[styles.monoTiny, { color: muted, fontWeight: '700' }]}>
+                  FÁBRICA/PLANTA MÁS CERCANA: {nearest.name} ({formatDistanceKm(nearest.distanceKm)})
+                </Text>
+              </View>
+            )}
+            {incident.sustanciaDetectada && (
+              <View style={styles.trackingEtaRow}>
+                <Text style={[styles.monoTiny, { color: '#22c55e', fontWeight: '700' }]}>
+                  SUSTANCIA DETECTADA: {incident.sustanciaDetectada}
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
         {isResolved ? (
           <View style={styles.trackingEtaRow}>
             <CheckCircle2 size={18} color="#10b981" />
             <Text style={[styles.trackingEta, { color: fg }]}>Incidente finalizado</Text>
           </View>
-        ) : (
+        ) : incident.unitAssigned ? (
           <View>
             <View style={styles.trackingEtaRow}>
               <Clock size={16} color="#10b981" />
@@ -1592,6 +1647,11 @@ const TrackingCard = React.memo(function TrackingCard({
               </Text>
             </View>
             <Text style={[styles.monoTiny, { color: muted }]}>{incident.originDepot} ➜ Tu Ubicación</Text>
+          </View>
+        ) : (
+          <View style={styles.trackingEtaRow}>
+            <Activity size={16} color="#8b5cf6" />
+            <Text style={[styles.trackingEta, { color: '#8b5cf6' }]}>ANALIZANDO EVIDENCIA…</Text>
           </View>
         )}
       </View>
@@ -1651,6 +1711,42 @@ const fgSign = (isLight: boolean) => (isLight ? '#000' : '#fff');
 
 const styles = StyleSheet.create({
   overlay: { ...StyleSheet.absoluteFill, zIndex: 60 },
+  // Fase C — CTA de análisis consolidado de evidencia
+  analyzeAllBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 22,
+    marginBottom: 10,
+  },
+  analyzeAllText: { color: '#fff', fontSize: 11, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.6 },
+  // Fase E — chip de ayuda recomendada (policía/ambulancia/bomberos)
+  respuestaChips: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10, paddingHorizontal: 2 },
+  respuestaChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 22,
+  },
+  respuestaChipText: { color: '#fff', fontSize: 11, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.5 },
+  // Llamadas discretas de emergencia (110 / 119 / 911)
+  callChipsRow: { flexDirection: 'row', gap: 6, marginBottom: 10 },
+  callChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 16,
+  },
+  callChipText: { color: '#fff', fontSize: 9, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.4 },
   // ODS 12 — tarjeta de prevención ambiental
   envSubtypeChip: {
     borderRadius: 999,

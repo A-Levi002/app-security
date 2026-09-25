@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -23,9 +23,13 @@ import {
   ChevronDown,
   ChevronUp,
   Search,
+  Factory,
+  FlaskConical,
 } from 'lucide-react-native';
 import { IncidentReport } from '../types';
 import { IncidentMap } from '../components/IncidentMap';
+import { useNearbyFactories } from '../hooks/useNearbyFactories';
+import { formatDistanceKm } from '../constants/industrialCatalog';
 
 // ---------------------------------------------------------------------------
 // LiveTrackingScreen (React Native)
@@ -36,6 +40,9 @@ import { IncidentMap } from '../components/IncidentMap';
 // - Gradiente CSS -> expo-linear-gradient
 // - IncidentMap usa MapLibre con tiles gratuitos (ver IncidentMap.tsx)
 // ---------------------------------------------------------------------------
+
+// Referencia estable para evitar objetos nuevos en cada render (memo del mapa).
+const FALLBACK_COORDS = { lat: 19.4326, lng: -99.1332 };
 
 interface LiveTrackingScreenProps {
   incident: IncidentReport;
@@ -100,7 +107,24 @@ export const LiveTrackingScreen: React.FC<LiveTrackingScreenProps> = ({
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
-  const coords = incident.coordinates || { lat: 19.4326, lng: -99.1332 };
+  const coords = incident.coordinates || FALLBACK_COORDS;
+
+  // Fase D — fábricas/plantas industriales cercanas (OSM en vivo + catálogo local).
+  const { factories, nearest } = useNearbyFactories(coords, 15);
+
+  // Memo de pois: objetos estables para que IncidentMap (React.memo) NO se
+  // re-renderice en cada tick del countdown del ETA (evita lag del mapa).
+  const pois = useMemo(
+    () =>
+      factories.map((f) => ({
+        id: f.id,
+        name: f.name,
+        kind: f.kind,
+        lat: f.lat,
+        lng: f.lng,
+      })),
+    [factories]
+  );
 
   // Altura real de la tarjeta HUD (medida con onLayout): sirve para elevar los
   // controles del mapa por encima de ella sin tapar botones.
@@ -125,6 +149,8 @@ export const LiveTrackingScreen: React.FC<LiveTrackingScreenProps> = ({
           // Eleva el rail de controles y las coordenadas por encima del HUD:
           // alto de la tarjeta (~240 px) + margen + safe area inferior.
           bottomSafeOffset={hudHeight + insets.bottom + 8}
+          // Fase D — fábricas/plantas industriales cercanas al punto del reporte.
+          pois={pois}
         />
         {/* Viñeta sutil arriba/abajo */}
         <LinearGradient
@@ -246,6 +272,36 @@ export const LiveTrackingScreen: React.FC<LiveTrackingScreenProps> = ({
               />
             </View>
           </View>
+
+          {/* Fase D — fábrica/planta más cercana + sustancia detectada */}
+          {(nearest || incident.sustanciaDetectada) && (
+            <View style={styles.factoryRow}>
+              {nearest ? (
+                <View style={styles.factoryItem}>
+                  <Factory size={13} color="#64748b" />
+                  <Text style={styles.factoryText} numberOfLines={1}>
+                    FÁBRICA/PLANTA: {nearest.name}
+                  </Text>
+                  <Text style={styles.factoryDistance}>
+                    {formatDistanceKm(nearest.distanceKm)}
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.factoryItem}>
+                  <Factory size={13} color="#64748b" />
+                  <Text style={styles.factoryText}>BUSCANDO FÁBRICA CERCANA…</Text>
+                </View>
+              )}
+              {incident.sustanciaDetectada && (
+                <View style={styles.factoryItem}>
+                  <FlaskConical size={13} color="#22c55e" />
+                  <Text style={styles.substanceText} numberOfLines={1}>
+                    SUSTANCIA: {incident.sustanciaDetectada}
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
 
           {/* Detalles expandibles */}
           {isExpanded && (
@@ -501,6 +557,38 @@ const styles = StyleSheet.create({
     flex: 1,
     height: '100%',
   },
+  factoryRow: {
+    gap: 6,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.1)',
+  },
+  factoryItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  factoryText: {
+    color: '#c4c7c8',
+    fontSize: 10,
+    fontWeight: '700',
+    flexShrink: 1,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  factoryDistance: {
+    color: '#64748b',
+    fontSize: 10,
+    fontVariant: ['tabular-nums'],
+  },
+  substanceText: {
+    color: '#22c55e',
+    fontSize: 10,
+    fontWeight: '700',
+    flexShrink: 1,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
   expandedSection: {
     gap: 8,
     paddingTop: 8,
@@ -559,25 +647,25 @@ const styles = StyleSheet.create({
   contactButton: {
     flex: 1,
     backgroundColor: '#fff',
-    borderRadius: 24,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    borderRadius: 20,
+    height: 40,
+    paddingHorizontal: 14,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: 6,
   },
   contactButtonText: {
     color: '#131313',
     fontWeight: '800',
-    fontSize: 12,
+    fontSize: 10,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   resolveButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 24,
+    height: 40,
+    paddingHorizontal: 14,
+    borderRadius: 20,
     backgroundColor: 'rgba(16,185,129,0.2)',
     borderWidth: 1,
     borderColor: 'rgba(16,185,129,0.4)',
@@ -589,21 +677,21 @@ const styles = StyleSheet.create({
   resolveButtonText: {
     color: '#6ee7b7',
     fontWeight: '800',
-    fontSize: 12,
+    fontSize: 10,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   searchButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderRadius: 24,
+    height: 40,
+    paddingHorizontal: 12,
+    borderRadius: 20,
     backgroundColor: 'rgba(255,255,255,0.08)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.2)',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
+    gap: 5,
   },
   searchButtonText: {
     color: '#c4c7c8',

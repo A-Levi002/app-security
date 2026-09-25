@@ -315,10 +315,16 @@ export const SecureOSApp: React.FC = () => {
           </Animated.View>
         ) : (
           <View style={styles.fill}>
-            <View style={[styles.fill, activeTab !== 'home' && styles.hidden]}>
+            {/*
+              Se monta SOLO la pestaña activa: desmontar las ocultas evita que
+              MapLibre (Historial: un mapa por tarjeta) y las animaciones
+              infinitas de Home sigan viviendo en segundo plano y consuman
+              hilo de UI/GPU (causa del lag y del "app no responde").
+            */}
+            {activeTab === 'home' && (
               <MemoHomeScreen onTriggerEmergency={handleOpenEmergencySelection} theme={settings.theme} />
-            </View>
-            <View style={[styles.fill, activeTab !== 'history' && styles.hidden]}>
+            )}
+            {activeTab === 'history' && (
               <MemoHistoryScreen
                 reports={reports}
                 onSelectReport={handleOpenReportDetailInChat}
@@ -326,17 +332,16 @@ export const SecureOSApp: React.FC = () => {
                 onDeleteReport={handleDeleteReport}
                 theme={settings.theme}
               />
-            </View>
-            <View style={[styles.fill, activeTab !== 'profile' && styles.hidden]}>
+            )}
+            {activeTab === 'profile' && (
               <MemoProfileScreen
                 userProfile={userProfile}
-                reports={reports}
                 onUpdateProfile={handleUpdateProfile}
                 onCallContact={handleCallContact}
                 onOpenSettings={handleOpenSettings}
                 theme={settings.theme}
               />
-            </View>
+            )}
           </View>
         )}
       </View>
@@ -395,7 +400,6 @@ export const SecureOSApp: React.FC = () => {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   fill: { flex: 1 },
-  hidden: { display: 'none' },
   content: { flex: 1, position: 'relative', zIndex: 1 },
   toast: {
     position: 'absolute',

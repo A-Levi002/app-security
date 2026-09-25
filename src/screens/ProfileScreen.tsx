@@ -25,20 +25,9 @@ import {
   Upload,
   AlertCircle,
   Bell,
-  Leaf,
 } from 'lucide-react-native';
-import { UserProfile, EmergencyContact, IncidentReport, EnvironmentalSubtype } from '../types';
-import { ENVIRONMENTAL_SUBTYPE_LABELS } from '../constants/environmentalCatalog';
+import { UserProfile, EmergencyContact } from '../types';
 import { ANIME_AVATARS, DEFAULT_ANIME_AVATAR, avatarSource } from '../data/animeAvatars';
-
-// Orden estable de subtipos para las barras de estadísticas.
-const ENVIRONMENTAL_SUBTYPE_ORDER: EnvironmentalSubtype[] = [
-  'derrame_quimico',
-  'fuga_gas',
-  'quema_residuos',
-  'botadero_ilegal',
-  'contaminacion_agua_suelo',
-];
 
 // ---------------------------------------------------------------------------
 // ProfileScreen (React Native)
@@ -50,7 +39,6 @@ const ENVIRONMENTAL_SUBTYPE_ORDER: EnvironmentalSubtype[] = [
 
 interface ProfileScreenProps {
   userProfile: UserProfile;
-  reports?: IncidentReport[];
   onUpdateProfile?: (profile: UserProfile, feedbackMessage?: string) => void;
   onCallContact: (name: string, phone?: string) => void;
   onOpenSettings: () => void;
@@ -118,7 +106,6 @@ export const RELATIONSHIP_PRESETS = [
 
 export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   userProfile,
-  reports = [],
   onUpdateProfile,
   onCallContact,
   onOpenSettings,
@@ -126,30 +113,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const isLight = theme === 'light';
-
-  // Cálculos de actividad táctica (portado funcionalmente de arconde-gamc)
-  const totalReports = reports.length;
-  const activeReports = reports.filter((r) => r.status === 'in_progress').length;
-  const resolvedReports = reports.filter((r) => r.status === 'resolved' || r.status === 'closed').length;
-
-  // ODS 12 — estadísticas de incidentes ambientales (datos de la misma lista
-  // de reportes, filtrando por categoría 'ambiental').
-  const ambientalReports = reports.filter(
-    (r) => r.category === 'ambiental' || r.subtipoAmbiental != null
-  );
-  const ambientalPercent = totalReports > 0 ? Math.round((ambientalReports.length / totalReports) * 100) : 0;
-  const maxEnvCount = ENVIRONMENTAL_SUBTYPE_ORDER.reduce((max, sub) => {
-    const c = ambientalReports.filter((r) => r.subtipoAmbiental === sub).length;
-    return c > max ? c : max;
-  }, 0);
-  // Gravedad dominante: alta > media > baja (critical cuenta como alta).
-  const ambientalSeverityMax = ambientalReports.some((r) => r.severity === 'high' || r.severity === 'critical')
-    ? 'alta'
-    : ambientalReports.some((r) => r.severity === 'medium')
-      ? 'media'
-      : ambientalReports.length > 0
-        ? 'baja'
-        : null;
 
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(userProfile.name);
@@ -430,82 +393,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               </Text>
             </TouchableOpacity>
           </View>
-        </View>
-
-        {/* Estadísticas de actividad táctica (portado funcionalmente de arconde-gamc) */}
-        <View style={[styles.statsRowCard, { backgroundColor: cardBg, borderColor: cardBorder }]}>
-          <View style={styles.statCol}>
-            <Text style={[styles.statNumber, { color: fg }]}>{totalReports}</Text>
-            <Text style={[styles.statLabel, { color: textMuted }]}>TOTAL REPORTES</Text>
-          </View>
-          <View style={[styles.statDivider, { backgroundColor: cardBorder }]} />
-          <View style={styles.statCol}>
-            <Text style={[styles.statNumber, { color: '#f59e0b' }]}>{activeReports}</Text>
-            <Text style={[styles.statLabel, { color: '#f59e0b' }]}>EN CURSO</Text>
-          </View>
-          <View style={[styles.statDivider, { backgroundColor: cardBorder }]} />
-          <View style={styles.statCol}>
-            <Text style={[styles.statNumber, { color: '#10b981' }]}>{resolvedReports}</Text>
-            <Text style={[styles.statLabel, { color: '#10b981' }]}>RESUELTOS</Text>
-          </View>
-        </View>
-
-        {/* ODS 12 — estadísticas ambientales */}
-        <View style={[styles.envStatsCard, { backgroundColor: cardBg, borderColor: cardBorder }]}>
-          <View style={styles.envStatsHeader}>
-            <Leaf size={14} color="#22c55e" />
-            <Text style={[styles.envStatsTitle, { color: fg }]}>INCIDENTES AMBIENTALES</Text>
-            <Text style={[styles.envStatsPercent, { color: '#22c55e' }]}>{ambientalPercent}%</Text>
-          </View>
-          <Text style={[styles.envStatsCount, { color: textMuted }]}>
-            {ambientalReports.length} de {totalReports} reportes
-          </Text>
-
-          {ambientalReports.length === 0 ? (
-            <Text style={[styles.envEmpty, { color: textMuted }]}>Sin incidentes ambientales todavía</Text>
-          ) : (
-            <>
-              {/* Barras por subtipo (minimalistas, consistentes con el estilo actual) */}
-              <View style={styles.envBars}>
-                {ENVIRONMENTAL_SUBTYPE_ORDER.map((sub) => {
-                  const count = ambientalReports.filter((r) => r.subtipoAmbiental === sub).length;
-                  const width = `${maxEnvCount > 0 ? Math.max(6, Math.round((count / maxEnvCount) * 100)) : 0}%` as const;
-                  return (
-                    <View key={sub} style={styles.envBarRow}>
-                      <Text numberOfLines={1} style={[styles.envBarLabel, { color: textMuted }]}>
-                        {ENVIRONMENTAL_SUBTYPE_LABELS[sub]}
-                      </Text>
-                      <View style={styles.envBarTrack}>
-                        <View style={[styles.envBarFill, { width, backgroundColor: '#22c55e' }]} />
-                      </View>
-                      <Text style={[styles.envBarValue, { color: fg }]}>{count}</Text>
-                    </View>
-                  );
-                })}
-              </View>
-
-              {/* Indicador de gravedad de los incidentes ambientales */}
-              <View style={styles.envSeverityRow}>
-                {(['baja', 'media', 'alta'] as const).map((nivel) => {
-                  const active = ambientalSeverityMax === nivel;
-                  const colors = { baja: '#10b981', media: '#f59e0b', alta: '#ef4444' };
-                  return (
-                    <View
-                      key={nivel}
-                      style={[
-                        styles.envSeverityPill,
-                        { borderColor: active ? colors[nivel] : cardBorder, backgroundColor: active ? `${colors[nivel]}22` : 'transparent' },
-                      ]}
-                    >
-                      <Text style={{ color: active ? colors[nivel] : textMuted, fontSize: 10, fontWeight: '700', textTransform: 'uppercase' }}>
-                        {nivel}
-                      </Text>
-                    </View>
-                  );
-                })}
-              </View>
-            </>
-          )}
         </View>
 
         {/* Contactos de emergencia */}
@@ -1190,57 +1077,6 @@ const styles = StyleSheet.create({
   bloodTypeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   bloodTypeChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, borderWidth: 1 },
   saveButton: { marginTop: 18, paddingVertical: 14, borderRadius: 28, alignItems: 'center', justifyContent: 'center' },
-  statsRowCard: {
-    marginHorizontal: 0,
-    marginTop: 0,
-    marginBottom: 20,
-    borderRadius: 20,
-    borderWidth: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 14,
-  },
-  // ODS 12 — estadísticas ambientales
-  envStatsCard: {
-    marginBottom: 20,
-    borderRadius: 20,
-    borderWidth: 1,
-    padding: 16,
-  },
-  envStatsHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  envStatsTitle: { fontSize: 11, fontWeight: '800', letterSpacing: 1, flex: 1 },
-  envStatsPercent: { fontSize: 13, fontWeight: '800' },
-  envStatsCount: { fontSize: 10, marginTop: 2 },
-  envEmpty: { fontSize: 12, marginTop: 10 },
-  envBars: { marginTop: 12, gap: 8 },
-  envBarRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  envBarLabel: { fontSize: 10, width: '38%' },
-  envBarTrack: { flex: 1, height: 6, borderRadius: 3, backgroundColor: 'rgba(128,128,128,0.2)', overflow: 'hidden' },
-  envBarFill: { height: '100%', borderRadius: 3 },
-  envBarValue: { fontSize: 11, fontWeight: '700', minWidth: 16, textAlign: 'right', fontVariant: ['tabular-nums'] },
-  envSeverityRow: { flexDirection: 'row', gap: 8, marginTop: 14 },
-  envSeverityPill: { borderRadius: 999, borderWidth: 1, paddingVertical: 4, paddingHorizontal: 12 },
-  statCol: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  statDivider: {
-    width: 1,
-    height: 28,
-  },
-  statNumber: {
-    fontSize: 18,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-  },
-  statLabel: {
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.6,
-    marginTop: 3,
-    textTransform: 'uppercase',
-  },
   phoneMetaRow: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -6,6 +6,12 @@
 // Cada función devuelve null en lugar de lanzar, para que los callers sigan
 // usando su comportamiento actual (curva simulada, coords numéricas, etc.).
 
+import {
+  findNearestIndustrial,
+  haversineKm,
+  type IndustrialPoi,
+} from '../constants/industrialCatalog';
+
 export interface PlaceResult {
   id: string;
   name: string;
@@ -296,4 +302,84 @@ export async function directions(
     if (res) return res;
   }
   return osrmDirections(from, to);
+}
+
+// ------------------------------------------------------------- Industrial ----
+
+export interface IndustrialResult extends IndustrialPoi {
+  distanceKm: number;
+}
+
+// Fábricas/plantas industriales CERCANAS: primero OpenStreetMap EN VIVO vía
+// Photon (osm_tag) y, si no hay red o resultados, el catálogo local como
+// respaldo offline. Ordenadas por distancia.
+export async function searchIndustrialNear(
+  lat: number,
+  lng: number,
+  radiusKm = 15,
+  limit = 8
+): Promise<IndustrialResult[]> {
+  const out: IndustrialResult[] = [];
+
+  try {
+    const params = new URLSearchParams({
+      lat: String(lat),
+      lon: String(lng),
+      limit: String(Math.min(40, limit * 4)),
+    });
+    params.append('osm_tag', 'landuse:industrial');
+    params.append('osm_tag', 'man_made:works');
+    params.append('osm_tag', 'building:industrial');
+    const res = await fetchWithTimeout(
+      `https://photon.komoot.io/api/?${params.toString()}`
+    );
+    if (res) {
+      const data = asRec(await res.json());
+      for (const raw of asArray(data.features)) {
+        const feature = asRec(raw);
+        const geometry = asRec(feature.geometry);
+        const props = asRec(feature.properties);
+        const coords = asArray(geometry.coordinates);
+        const plng = num(coords[0]);
+        const plat = num(coords[1]);
+        if (plat === undefined || plng === undefined) continue;
+        const d = haversineKm(lat, lng, plat, plng);
+        if (d > radiusKm) continue;
+        const name =
+          str(props.name) ||
+          (str(props.street) ? `Planta industrial, ${str(props.street)}` : '') ||
+          'Planta industrial';
+        if (!name) continue;
+        const kind = str(props.osm_value) || 'industria';
+        const key = `${plng.toFixed(4)},${plat.toFixed(4)}`;
+        if (out.some((o) => o.name === name || `${o.lng.toFixed(4)},${o.lat.toFixed(4)}` === key)) continue;
+        out.push({
+          id: key,
+          name,
+          kind,
+          lat: plat,
+          lng: plng,
+          distanceKm: Math.round(d * 10) / 10,
+        });
+      }
+    }
+  } catch {
+    // sin red: caemos al catálogo local
+  }
+
+  if (out.length === 0) {
+    const nearest = findNearestIndustrial(lat, lng, radiusKm);
+    if (nearest) {
+      out.push({
+        id: nearest.id,
+        name: nearest.name,
+        kind: nearest.kind,
+        lat: nearest.lat,
+        lng: nearest.lng,
+        distanceKm: Math.round(nearest.distanceKm * 10) / 10,
+      });
+    }
+  }
+
+  return out.sort((a, b) => a.distanceKm - b.distanceKm).slice(0, limit);
 }

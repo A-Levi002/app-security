@@ -214,6 +214,8 @@ Deno.serve(async (req: Request) => {
               originDepot: analysis.base_origen ?? extra.originDepot ?? "",
               etaMinutes: analysis.eta_minutos ?? extra.etaMinutes ?? 0,
               etaSeconds: 0,
+              sustanciaDetectada: analysis.sustancia_detectada ?? extra.sustanciaDetectada ?? null,
+              tipoRespuesta: analysis.tipo_respuesta ?? extra.tipoRespuesta ?? null,
             },
           })
           .eq("id_reporte", reporteId);

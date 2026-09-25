@@ -27,11 +27,21 @@ export function useStoredState<T>(key: string, initialValue: T) {
     };
   }, [key]);
 
+  // Escritura con debounce: los reportes incluyen chats con media y moverlos a
+  // AsyncStorage en CADA cambio serializaba JSON enorme en el hilo de UI (ANR).
+  const writeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     if (!hydrated.current) return;
-    AsyncStorage.setItem(key, JSON.stringify(value)).catch(() => {
-      // ignore write errors
-    });
+    if (writeTimer.current) clearTimeout(writeTimer.current);
+    writeTimer.current = setTimeout(() => {
+      AsyncStorage.setItem(key, JSON.stringify(value)).catch(() => {
+        // ignore write errors
+      });
+    }, 500);
+    return () => {
+      if (writeTimer.current) clearTimeout(writeTimer.current);
+    };
   }, [key, value]);
 
   return [value, setValue] as const;

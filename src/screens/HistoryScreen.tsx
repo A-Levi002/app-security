@@ -7,8 +7,10 @@ import {
   ScrollView,
   Modal,
   Image,
+  FlatList,
+  ListRenderItemInfo,
 } from 'react-native';
-import Animated, { FadeInUp, FadeIn } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { useVideoPlayer, VideoView } from 'expo-video';
@@ -56,10 +58,7 @@ interface HistoryScreenProps {
   theme?: 'dark' | 'light';
 }
 
-type FilterCategory = 'all' | 'in_progress' | 'resolved' | 'closed';
-
-// ODS 12 — filtro de incidentes ambientales (por defecto se muestran todos).
-type EnvironmentalFilter = 'all' | 'ambiental';
+type FilterCategory = 'all' | 'in_progress' | 'resolved' | 'closed' | 'ambiental';
 
 const CATEGORY_ICONS: Record<EmergencyCategory, any> = {
   traffic: Car,
@@ -202,20 +201,21 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
   const insets = useSafeAreaInsets();
   const isLight = theme === 'light';
   const [selectedDetailReport, setSelectedDetailReport] = useState<IncidentReport | null>(null);
-  const [filterStatus, setFilterStatus] = useState<FilterCategory>('all');
-  const [filterAmbiental, setFilterAmbiental] = useState<EnvironmentalFilter>('all');
+  // Filtro de selección ÚNICA: estado, categóricos y el chip Ambientales son
+  // mutuamente excluyentes. Tocar de nuevo el activo vuelve a "Todos" — así el
+  // chip Ambientales nunca queda "doble" ni combinado con otro filtro.
+  const [activeFilter, setActiveFilter] = useState<FilterCategory>('all');
 
   const sortedAndFilteredReports = useMemo(() => {
     let result = [...reports];
-    if (filterStatus !== 'all') {
-      result = result.filter((rep) => rep.status === filterStatus);
+    if (activeFilter === 'in_progress' || activeFilter === 'resolved' || activeFilter === 'closed') {
+      result = result.filter((rep) => rep.status === activeFilter);
     }
-    // ODS 12 — chip "Ambientales": muestra solo ambientales o todos.
-    if (filterAmbiental !== 'all') {
+    if (activeFilter === 'ambiental') {
       result = result.filter((rep) => (rep as { subtipoAmbiental?: unknown }).subtipoAmbiental != null || rep.category === 'ambiental');
     }
     return result;
-  }, [reports, filterStatus, filterAmbiental]);
+  }, [reports, activeFilter]);
 
   const getCategoryIcon = (category: EmergencyCategory) => CATEGORY_ICONS[category] || HelpCircle;
 
@@ -292,11 +292,11 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
               },
             ] as { key: FilterCategory; label: string; activeColor: string }[]
           ).map((chip) => {
-            const active = filterStatus === chip.key;
+            const active = activeFilter === chip.key;
             return (
               <TouchableOpacity
                 key={chip.key}
-                onPress={() => setFilterStatus(chip.key)}
+                onPress={() => setActiveFilter(chip.key)}
                 style={[
                   styles.chip,
                   { borderColor: active ? chip.activeColor : cardBorder },
@@ -309,13 +309,13 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
               </TouchableOpacity>
             );
           })}
-          {/* ODS 12 — chip "Ambientales": muestra/oculta los incidentes ambientales */}
+          {/* ODS 12 — chip "Ambientales" (selección única: seleccionar otro lo limpia) */}
           {(() => {
             const envCount = reports.filter((r) => (r as { subtipoAmbiental?: unknown }).subtipoAmbiental != null || r.category === 'ambiental').length;
-            const active = filterAmbiental === 'ambiental';
+            const active = activeFilter === 'ambiental';
             return (
               <TouchableOpacity
-                onPress={() => setFilterAmbiental(active ? 'all' : 'ambiental')}
+                onPress={() => setActiveFilter(active ? 'all' : 'ambiental')}
                 style={[
                   styles.chip,
                   { borderColor: active ? '#22c55e' : cardBorder },
@@ -332,9 +332,19 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
         </ScrollView>
       </View>
 
-      {/* Lista de reportes */}
-      <ScrollView style={styles.list} contentContainerStyle={{ paddingBottom: 36, gap: 18 }}>
-        {sortedAndFilteredReports.length === 0 ? (
+      {/* Lista de reportes — FlatList virtualizado: desmonta tarjetas fuera de
+          pantalla (y sus mini-mapas MapLibre) para que el Historial no mantenga
+          N superficies GL vivas; sin animaciones de entrada en cascada. */}
+      <FlatList
+        style={styles.list}
+        data={sortedAndFilteredReports}
+        keyExtractor={(r) => r.id}
+        initialNumToRender={3}
+        maxToRenderPerBatch={3}
+        windowSize={5}
+        removeClippedSubviews
+        contentContainerStyle={{ paddingBottom: 36, gap: 18 }}
+        ListEmptyComponent={
           <View style={[styles.emptyCard, { backgroundColor: cardBg, borderColor: cardBorder }]}>
             <CheckCircle2 size={44} color="#10b981" style={{ alignSelf: 'center', marginBottom: 10 }} />
             <Text style={[styles.emptyTitle, { color: isLight ? '#000' : '#fff' }]}>
@@ -344,20 +354,16 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
               Todos los incidentes generados aparecerán en esta lista con su ubicación georreferenciada en el mapa.
             </Text>
           </View>
-        ) : (
-          sortedAndFilteredReports.map((report, index) => {
-            const Icon = getCategoryIcon(report.category);
-            const originalIndex = reports.findIndex((r) => r.id === report.id);
-            const recordNumber = originalIndex !== -1 ? originalIndex + 1 : index + 1;
-            const isFirstRecord = originalIndex === 0;
-            const isLastRecord = originalIndex === reports.length - 1;
+        }
+        renderItem={({ item: report, index }: ListRenderItemInfo<IncidentReport>) => {
+          const Icon = getCategoryIcon(report.category);
+          const originalIndex = reports.findIndex((r) => r.id === report.id);
+          const recordNumber = originalIndex !== -1 ? originalIndex + 1 : index + 1;
+          const isFirstRecord = originalIndex === 0;
+          const isLastRecord = originalIndex === reports.length - 1;
 
-            return (
-              <Animated.View
-                key={report.id}
-                entering={FadeInUp.delay(index * 40).duration(300)}
-                style={[styles.card, { backgroundColor: cardBg, borderColor: cardBorder }]}
-              >
+          return (
+            <View style={[styles.card, { backgroundColor: cardBg, borderColor: cardBorder }]}>
                 <View style={styles.cardHeaderRow}>
                   <View style={styles.cardHeaderLeft}>
                     <View
@@ -460,11 +466,11 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
                     </TouchableOpacity>
                   )}
                 </View>
-              </Animated.View>
+              </View>
             );
-          })
-        )}
-      </ScrollView>
+          }
+        }
+      />
 
       {/* Modal de expediente completo */}
       <Modal

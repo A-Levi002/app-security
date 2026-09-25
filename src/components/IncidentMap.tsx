@@ -30,6 +30,7 @@ import {
   Navigation,
   MapPin,
   AlertTriangle,
+  Factory,
 } from 'lucide-react-native';
 import { EmergencyCategory } from '../types';
 import { directions } from '../lib/locationApi';
@@ -137,6 +138,9 @@ interface IncidentMapProps {
   unitCoordinates?: { lat: number; lng: number };
   fullScreen?: boolean;
   onExpand?: () => void;
+  /** Fábricas/plantas industriales cercanas (punto del incidente incluido si no
+   *  está anotado con "sustancia aquí"). Marcadores discretos en cualquier capa. */
+  pois?: { id: string; name: string; lat: number; lng: number; kind?: string }[];
   /** Altura (px) de la UI que cubre la parte inferior (ej. HUD de seguimiento).
    *  Eleva los badges inferiores y centra el rail de controles en el área visible. */
   bottomSafeOffset?: number;
@@ -167,6 +171,7 @@ export const IncidentMap = React.memo(function IncidentMap({
   fullScreen = false,
   onExpand,
   bottomSafeOffset = 0,
+  pois,
 }: IncidentMapProps) {
   const mapRef = useRef<MapRef>(null);
   const cameraRef = useRef<CameraRef>(null);
@@ -420,6 +425,28 @@ export const IncidentMap = React.memo(function IncidentMap({
             </View>
           </ViewAnnotation>
         )}
+
+        {/* Fábricas/plantas industriales cercanas (Fase D): marcadores discretos
+            visibles en las 4 capas; se omite la que coincide con el incidente. */}
+        {pois && pois.length > 0 &&
+          pois
+            .filter(
+              (p) =>
+                Math.abs(p.lat - coordinates.lat) > 0.0004 ||
+                Math.abs(p.lng - coordinates.lng) > 0.0004
+            )
+            .map((p) => (
+              <ViewAnnotation
+                key={`poi-${p.id}`}
+                id={`poi-${p.id}`}
+                lngLat={[p.lng, p.lat]}
+                anchor="center"
+              >
+                <View style={styles.poiMarker}>
+                  <Factory size={12} color="#334155" />
+                </View>
+              </ViewAnnotation>
+            ))}
       </Map>      {showControls && (
         <>
           {/* Aviso de fallback del satélite */}
@@ -595,6 +622,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 2,
     borderColor: '#ef4444',
+  },
+  poiMarker: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: 'rgba(232,236,242,0.95)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(100,116,139,0.6)',
   },
   controlsTopRight: {
     position: 'absolute',
